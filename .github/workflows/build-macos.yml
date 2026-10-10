@@ -9,7 +9,7 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
-    name: Build macOS .app (WebKit)
+    name: Build macOS binary (WebKit, wry)
 
     steps:
       - name: 📥 Checkout code
@@ -18,7 +18,7 @@ jobs:
       - name: 🦀 Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: 🔨 Build .app
+      - name: 🔨 Build binary
         run: |
           cd src-tauri
           cargo build --release
@@ -32,7 +32,6 @@ jobs:
           TAG="${GITHUB_REF_NAME:-dev}"
           ZIP="sierra-$TAG-macos-x64.zip"
           zip "$ZIP" sierra
-          ls -lh "$ZIP"
 
       - name: ⬆️ Upload artifact
         uses: actions/upload-artifact@v4
@@ -48,5 +47,4 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           ZIP=$(ls sierra-*.zip | head -1)
-          echo "Uploading $ZIP to release $TAG"
           gh release upload "$TAG" "$ZIP" --clobber

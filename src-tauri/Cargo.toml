@@ -1,23 +1,19 @@
 [package]
 name = "sierra"
-version = "4.0.0"
-description = "Sierra — лёгкий, стильный браузер на Rust"
-authors = ["vefyz"]
-license = "MIT"
-repository = "https://github.com/vefyz/sierra"
+version = "5.0.0"
 edition = "2021"
-rust-version = "1.77"
-
-[build-dependencies]
-tauri-build = { version = "2", features = [] }
+description = "Sierra — лёгкий браузер на Rust (wry + tao)"
 
 [dependencies]
-tauri = { version = "2", features = [] }
+wry = "0.57"
+tao = "0.37"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-url = "2"
-chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 
-[features]
-custom-protocol = ["tauri/custom-protocol"]
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

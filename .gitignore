@@ -13,21 +13,11 @@ dist/
 *.swp
 .DS_Store
 
-# Cargo lock (for binary projects, this is OK to commit actually)
-# Comment out if you want to commit it:
-# Cargo.lock
+# Cargo lock
+Cargo.lock
 
 # OS
 Thumbs.db
-
-# Tauri generated schemas
-src-tauri/gen/
-
-# Cargo.lock (тоже не нужен для библиотек, но для binary можно)
-# Cargo.lock
-
-# .cargo/config.toml — коммитим, так как содержит локальные настройки
-# src-tauri/.cargo/config.toml
 
 # Local cargo config (содержит пути к распакованным библиотекам)
 src-tauri/.cargo/config.toml

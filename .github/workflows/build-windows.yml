@@ -9,7 +9,7 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
-    name: Build Windows .exe (WebView2)
+    name: Build Windows .exe (WebView2, wry)
 
     steps:
       - name: 📥 Checkout code
@@ -23,16 +23,8 @@ jobs:
         run: |
           cd src-tauri
           cargo build --release
-          # Покажем что в target/release
-          Get-ChildItem target/release/*.exe | Format-Table Name, Length
-          # Копируем .exe в корень репозитория
           Copy-Item target/release/sierra.exe ../sierra.exe
           cd ..
-          Get-Item sierra.exe | Format-Table Name, Length
-
-      - name: 📊 Show size
-        shell: pwsh
-        run: |
           $size = (Get-Item sierra.exe).Length / 1MB
           Write-Host "sierra.exe size: $([math]::Round($size, 2)) MB"
 
@@ -43,8 +35,6 @@ jobs:
           if (-not $tag) { $tag = "dev" }
           $zipName = "sierra-$tag-windows-x64.zip"
           Compress-Archive -Path sierra.exe -DestinationPath $zipName
-          Write-Host "Created: $zipName"
-          Get-Item $zipName | Format-Table Name, Length
 
       - name: ⬆️ Upload artifact
         uses: actions/upload-artifact@v4
@@ -61,5 +51,4 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}"
           $zip = Get-ChildItem sierra-*.zip | Select-Object -First 1
-          Write-Host "Uploading $($zip.Name) to release $tag"
           gh release upload $tag $zip.FullName --clobber
