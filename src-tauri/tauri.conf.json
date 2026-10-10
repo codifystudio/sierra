@@ -34,7 +34,8 @@
     "copyright": "MIT",
     "targets": "all",
     "icon": [
-      "icons/icon.png"
+      "icons/icon.png",
+      "icons/icon.ico"
     ],
     "linux": {
       "deb": {
