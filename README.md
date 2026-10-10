@@ -2,35 +2,49 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.77%2B-orange.svg)](https://rust-lang.org)
 [![wry](https://img.shields.io/badge/wry-0.57-blue.svg)](https://github.com/tauri-apps/wry)
-[![Version](https://img.shields.io/badge/version-5.0.0-red.svg)]()
+[![Version](https://img.shields.io/badge/version-5.2.0-red.svg)](https://github.com/codifystudio/sierra/releases)
+[![Size](https://img.shields.io/badge/size-282%20KB-success.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Полностью переписан на wry + tao (без Tauri)** — прямой доступ к WebView, никаких middleware, никаких capabilities, никаких CSP.
+**Браузер на Rust с прямым доступом к WebView (wry + tao, без Tauri)** — бинарник всего **282 КБ** для Windows!
 
-## 🎉 Что нового в v5.0.0
+## 🎉 Что нового в v5.2.0
 
-- 🚫 **Выбросили Tauri** — он ломался на capabilities, CSP, WebviewUrl
-- 🦀 **Только wry + tao** — прямой доступ к WebView
-- 📦 **Размер: 379 КБ!** (UPX-сжатый Linux-бинарник)
-- 🎯 **Одно окно** — chrome и контент в одном окне
-- 🎨 **Гибрид-дизайн Яндекс + Chrome + Safari** сохранён
+- ✅ **Убрана красная debug-полоска** — чистый интерфейс
+- ✅ **Исправлена бесконечная загрузка** — навигация через JS (`evaluate_script`) вместо ненадёжного `load_url`
+- ✅ **Два окна** — chrome (сверху) + content (под ним, без декораций)
+- ✅ **Синхронизация окон** — при движении/resize chrome → content следует
 
-## 📊 Эволюция
+## 📊 Эволюция размеров
 
-| Версия | Язык | Движок | Размер | Проблемы |
-|--------|------|--------|--------|----------|
+| Версия | Язык | Движок | Размер Windows | Проблемы |
+|--------|------|--------|----------------|----------|
 | v1.0-v2.0 | Python | QtWebEngine | 242 МБ | Тяжёлый |
 | v3.0 | Python | pywebview | 12 МБ | 2 окна |
 | v4.0-v4.4 | Rust | Tauri 2 | 2-3 МБ | Не открывал страницы |
-| **v5.0** | **Rust** | **wry + tao** | **379 КБ** | **Работает!** |
+| **v5.0-v5.2** | **Rust** | **wry + tao** | **282 КБ** | **Работает!** |
+
+Уменьшение в **883 раза** по сравнению с первой версией!
+
+## 📦 Downloads (v5.2.0)
+
+| Платформа | Файл | Размер |
+|-----------|------|--------|
+| 🪟 **Windows x64** | `sierra-5.2.0-windows-x64.zip` | **282 КБ** |
+| 🍎 **macOS x64** | `sierra-5.2.0-macos-x64.zip` | **384 КБ** |
+| 🐧 **Linux x64** | `sierra-5.2.0-linux-x64.zip` | **380 КБ** |
+
+👉 [Все релизы](https://github.com/codifystudio/sierra/releases)
 
 ## 🏗 Архитектура
 
 - **wry** — прямой доступ к WebView (WebView2 на Win, WebKit на macOS, WebKitGTK на Linux)
 - **tao** — окна (от Tauri team, но без middleware)
-- **Один бинарник** — HTML/CSS/JS встроены прямо в Rust код
+- **Два окна**:
+  - `chrome_window` (1200x140) — вкладки, тулбар, адресная строка
+  - `content_window` (1200x600, без декораций) — нативный WebView показывает сайт
 - **IPC** — через `WebViewBuilder::with_ipc_handler`
-- **Навигация** — `webview.load_url(url)` (прямой вызов, без middleware)
+- **Навигация** — `content_webview.evaluate_script("window.location.href = '...'")`
 
 ## 🎨 Дизайн — гибрид Яндекс + Chrome + Safari
 
@@ -77,6 +91,15 @@ cargo build --release
 | **Windows 10/11** | Ничего | Microsoft Edge WebView2 |
 | **macOS 10.13+** | Ничего | WebKit |
 | **Linux** | WebKitGTK 4.1 | WebKitGTK |
+
+## ⚠️ Известные баги
+
+Полный аудит выявил 38 багов (9 критичных). Главные:
+- #6: Back/Forward сломаны после 2 переходов
+- #4: История браузера не сохраняется
+- #5: Title вкладки навсегда «Загрузка…»
+
+См. [issue #1](https://github.com/codifystudio/sierra/issues/1) для деталей и плана исправления.
 
 ## 📂 Структура проекта
 
