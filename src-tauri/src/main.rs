@@ -692,10 +692,24 @@ fn update_state_json(state: &State) -> String {
 fn load_url_in_content(content: &Arc<Mutex<Option<WebView>>>, url: &str) {
     println!("[Sierra] Loading URL in content: {}", url);
     if let Some(ref wv) = *content.lock().unwrap() {
-        match wv.load_url(url) {
-            Ok(_) => println!("[Sierra] load_url OK"),
-            Err(e) => println!("[Sierra] load_url error: {}", e),
+        // Используем evaluate_script с window.location.href — это НАДЁЖНЕЕ,
+        // чем load_url, потому что работает через JS engine, который
+        // гарантированно инициализирован в WebView.
+        let js = format!("window.location.href = '{}';", url.replace('\'', "\\'"));
+        println!("[Sierra] JS: {}", js);
+        match wv.evaluate_script(&js) {
+            Ok(_) => println!("[Sierra] navigate via JS OK"),
+            Err(e) => {
+                println!("[Sierra] evaluate_script error: {}, trying load_url", e);
+                // Fallback на load_url
+                match wv.load_url(url) {
+                    Ok(_) => println!("[Sierra] load_url OK (fallback)"),
+                    Err(e2) => println!("[Sierra] load_url error: {}", e2),
+                }
+            }
         }
+    } else {
+        println!("[Sierra] content webview is None!");
     }
 }
 
@@ -773,6 +787,9 @@ fn main() -> wry::Result<()> {
         .with_ipc_handler(move |_req: wry::http::Request<String>| {})
         .build(&content_window)?;
     *content_webview.lock().unwrap() = Some(content_wv);
+
+    // Фокус на chrome_window (чтобы пользователь видел тулбар)
+    chrome_window.set_focus();
 
     // Отправляем начальное состояние в chrome
     {
