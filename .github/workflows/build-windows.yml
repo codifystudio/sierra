@@ -1,0 +1,64 @@
+name: Build Sierra for Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    name: Build Windows .exe (WebView2)
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🦀 Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 📦 Install Tauri CLI
+        shell: pwsh
+        run: |
+          cargo install tauri-cli --version "^2.0"
+
+      - name: 🔨 Build .exe
+        shell: pwsh
+        run: |
+          cd src-tauri
+          cargo build --release
+          Copy-Item target/release/sierra.exe ../../sierra.exe
+
+      - name: 📊 Show size
+        shell: pwsh
+        run: |
+          $size = (Get-Item sierra.exe).Length / 1MB
+          Write-Host "sierra.exe size: $([math]::Round($size, 2)) MB"
+
+      - name: 📦 Package .exe into zip
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if (-not $tag) { $tag = "dev" }
+          $zipName = "sierra-$tag-windows-x64.zip"
+          Compress-Archive -Path sierra.exe -DestinationPath $zipName
+          Write-Host "Created: $zipName"
+
+      - name: ⬆️ Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sierra-windows-exe
+          path: sierra-*.zip
+          retention-days: 90
+
+      - name: 🚀 Attach to GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $zip = Get-ChildItem sierra-*.zip | Select-Object -First 1
+          Write-Host "Uploading $($zip.Name) to release $tag"
+          gh release upload $tag $zip.FullName --clobber
