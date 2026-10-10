@@ -19,9 +19,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use tao::{
-    event::{Event, WindowEvent},
+    event::{Event, WindowEvent, StartCause},
     event_loop::{ControlFlow, EventLoop},
-    window::{WindowBuilder},
+    window::{WindowBuilder, WindowId},
     dpi::LogicalSize,
 };
 use wry::{WebViewBuilder, WebView};
@@ -263,12 +263,9 @@ body.light .shortcut {{ background: rgba(0,0,0,0.04); }}
 .shortcut {{ padding: 12px 8px; border-radius: 10px; text-align: center; cursor: pointer; font-size: 11px; }}
 .shortcut-icon {{ width: 40px; height: 40px; border-radius: 50%; margin: 0 auto 6px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; }}
 .hint {{ margin-top: 20px; font-size: 11px; opacity: 0.5; text-align: center; }}
-
-#debug {{ position: fixed; top: 0; left: 0; right: 0; background: var(--red); color: #fff; padding: 4px 10px; font-family: monospace; font-size: 10px; z-index: 9999; display: none; max-height: 80px; overflow: auto; }}
 </style>
 </head>
 <body class="{theme}">
-<div id="debug"></div>
 
 <div class="tab-strip">
   <div class="tabs" id="tabs">{tabs_html}</div>
@@ -319,25 +316,14 @@ body.light .shortcut {{ background: rgba(0,0,0,0.04); }}
 </div>
 
 <script>
-let invoke = null;
 // IPC через wry: window.ipc.postMessage
 function send(cmd, args) {{
   const msg = JSON.stringify({{cmd, args: args || {{}}}});
   if (window.ipc && window.ipc.postMessage) {{
     window.ipc.postMessage(msg);
   }} else {{
-    debug('IPC НЕ ДОСТУПЕН');
+    console.log('IPC НЕ ДОСТУПЕН');
   }}
-}}
-
-function debug(msg) {{
-  const el = document.getElementById('debug');
-  if (el) {{
-    el.style.display = 'block';
-    el.innerHTML += msg + '<br>';
-    el.scrollTop = el.scrollHeight;
-  }}
-  console.log('[Sierra]', msg);
 }}
 
 // Кнопки навигации
@@ -459,7 +445,7 @@ window.sierra_update = function(state) {{
   }}
 }};
 
-debug('Sierra init OK, IPC: ' + (window.ipc ? 'yes' : 'no'));
+console.log('Sierra init OK, IPC: ' + (window.ipc ? 'yes' : 'no'));
 send('init');
 </script>
 </body>
@@ -475,11 +461,10 @@ fn html_escape(s: &str) -> String {
 // ═══════════════════════════════════════════════════════════════════════
 
 fn handle_ipc(
-    request: &wry::http::Request<String>,
+    msg: &str,
     state: &Arc<Mutex<State>>,
     content_webview: &Arc<Mutex<Option<WebView>>>,
 ) -> Option<String> {
-    let msg = request.body();
     let v: Value = match serde_json::from_str(msg) {
         Ok(v) => v,
         Err(e) => return Some(format!("IPC parse error: {}", e)),
@@ -726,73 +711,123 @@ fn load_html_in_content(content: &Arc<Mutex<Option<WebView>>>, html: &str) {
 
 fn main() -> wry::Result<()> {
     let event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
+
+    // === Главное окно (chrome) — узкое, 140px высотой ===
+    let chrome_window = WindowBuilder::new()
         .with_title("Sierra")
-        .with_inner_size(LogicalSize::new(1200.0, 800.0))
-        .with_min_inner_size(LogicalSize::new(600.0, 400.0))
+        .with_inner_size(LogicalSize::new(1200.0, 140.0))
+        .with_min_inner_size(LogicalSize::new(600.0, 140.0))
+        .with_resizable(true)
         .build(&event_loop)
         .unwrap();
+    let chrome_window_id = chrome_window.id();
 
     let state = Arc::new(Mutex::new(State::new()));
     let content_webview: Arc<Mutex<Option<WebView>>> = Arc::new(Mutex::new(None));
+    let chrome_webview_ref: Arc<Mutex<Option<WebView>>> = Arc::new(Mutex::new(None));
 
-    // Стратегия: Chrome WebView создаём один раз с правильным IPC handler,
-    // который захватывает state и content_webview через Arc<Mutex<Option<WebView>>>
-    // (можно добавить ещё webview позже).
-    // Для ответа в chrome — используем `wry::WebView::eval` через Arc.
-
-    // Сначала делаем Arc с placeholder WebView
-    let chrome_webview: Arc<Mutex<WebView>> = Arc::new(Mutex::new(
-        WebViewBuilder::new()
-            .with_html("<html><body></body></html>")
-            .with_ipc_handler(move |_req: wry::http::Request<String>| {})
-            .build(&window)?
-    ));
-
-    // Создаём Content WebView
-    let content_webview_inner = WebViewBuilder::new()
-        .with_url(HOMEPAGE)
-        .with_ipc_handler(move |_req: wry::http::Request<String>| {})
-        .build(&window)?;
-    *content_webview.lock().unwrap() = Some(content_webview_inner);
-
-    // Заменяем chrome_webview на новый с правильным HTML и IPC handler
-    let state_clone = state.clone();
-    let content_clone1 = content_webview.clone();
-    let chrome_ref = chrome_webview.clone();
+    // Создаём chrome WebView с IPC handler
+    let state_for_ipc = state.clone();
+    let content_for_ipc = content_webview.clone();
+    let chrome_for_ipc = chrome_webview_ref.clone();
     let chrome_html_str = {
         let st = state.lock().unwrap();
         chrome_html(&st)
     };
-    let new_chrome = WebViewBuilder::new()
+    let chrome_wv = WebViewBuilder::new()
         .with_html(chrome_html_str)
         .with_ipc_handler(move |request: wry::http::Request<String>| {
-            println!("[Sierra IPC] {}", request.body());
-            if let Some(response) = handle_ipc(&request, &state_clone, &content_clone1) {
-                let _ = chrome_ref.lock().unwrap().evaluate_script(&response);
+            let body = request.body();
+            println!("[Sierra IPC] {}", body);
+            if let Some(response) = handle_ipc(body, &state_for_ipc, &content_for_ipc) {
+                if let Some(ref wv) = *chrome_for_ipc.lock().unwrap() {
+                    let _ = wv.evaluate_script(&response);
+                }
             }
         })
-        .build(&window)?;
-    *chrome_webview.lock().unwrap() = new_chrome;
+        .build(&chrome_window)?;
+    *chrome_webview_ref.lock().unwrap() = Some(chrome_wv);
 
-    // Показать начальное состояние в chrome
+    // === Окно контента — под chrome, без декораций ===
+    let content_window = WindowBuilder::new()
+        .with_title("Sierra Content")
+        .with_inner_size(LogicalSize::new(1200.0, 600.0))
+        .with_decorations(false)
+        .with_resizable(true)
+        .build(&event_loop)
+        .unwrap();
+    let content_window_id = content_window.id();
+
+    // Позиционируем content под chrome
+    if let Ok(chrome_pos) = chrome_window.outer_position() {
+        let chrome_size = chrome_window.outer_size();
+        let _ = content_window.set_outer_position(tao::dpi::PhysicalPosition::new(
+            chrome_pos.x,
+            chrome_pos.y + chrome_size.height as i32,
+        ));
+    }
+
+    // Создаём content WebView (нативный, с URL)
+    let content_wv = WebViewBuilder::new()
+        .with_url(HOMEPAGE)
+        .with_ipc_handler(move |_req: wry::http::Request<String>| {})
+        .build(&content_window)?;
+    *content_webview.lock().unwrap() = Some(content_wv);
+
+    // Отправляем начальное состояние в chrome
     {
         let st = state.lock().unwrap();
         let update = update_state_json(&st);
-        let _ = chrome_webview.lock().unwrap().evaluate_script(&update);
+        if let Some(ref wv) = *chrome_webview_ref.lock().unwrap() {
+            let _ = wv.evaluate_script(&update);
+        }
     }
 
-    // Установка размеров webview через platform-specific
-    // TODO: позиционирование webview в окне требует platform-specific кода
+    // Храним ID окон для обработки событий
+    let chrome_id = chrome_window_id;
+    let content_id = content_window_id;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
-                *control_flow = ControlFlow::Exit;
+            Event::NewEvents(StartCause::Init) => {
+                println!("[Sierra] Started");
             }
-            Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
-                // TODO: resize webviews
+            Event::WindowEvent { event: WindowEvent::CloseRequested, window_id, .. } => {
+                if window_id == chrome_id || window_id == content_id {
+                    // Закрыли любое окно — выходим
+                    chrome_window.set_visible(false);
+                    content_window.set_visible(false);
+                    *control_flow = ControlFlow::Exit;
+                }
+            }
+            Event::WindowEvent { event: WindowEvent::Resized(_), window_id, .. } => {
+                // При resize chrome — двигаем content
+                if window_id == chrome_id {
+                    if let Ok(chrome_pos) = chrome_window.outer_position() {
+                        let chrome_size = chrome_window.outer_size();
+                        let _ = content_window.set_outer_position(tao::dpi::PhysicalPosition::new(
+                            chrome_pos.x,
+                            chrome_pos.y + chrome_size.height as i32,
+                        ));
+                        let _ = content_window.set_inner_size(LogicalSize::new(
+                            chrome_size.width as f64,
+                            600.0,
+                        ));
+                    }
+                }
+            }
+            Event::WindowEvent { event: WindowEvent::Moved(_), window_id, .. } => {
+                // При движении chrome — двигаем content
+                if window_id == chrome_id {
+                    if let Ok(chrome_pos) = chrome_window.outer_position() {
+                        let chrome_size = chrome_window.outer_size();
+                        let _ = content_window.set_outer_position(tao::dpi::PhysicalPosition::new(
+                            chrome_pos.x,
+                            chrome_pos.y + chrome_size.height as i32,
+                        ));
+                    }
+                }
             }
             _ => {}
         }
