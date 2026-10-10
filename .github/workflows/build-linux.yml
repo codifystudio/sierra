@@ -8,8 +8,8 @@ on:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-22.04
-    name: Build Linux binary (WebKitGTK)
+    runs-on: ubuntu-24.04
+    name: Build Linux binary (WebKitGTK 4.1)
 
     steps:
       - name: 📥 Checkout code
