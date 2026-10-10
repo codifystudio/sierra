@@ -507,9 +507,15 @@ fn handle_ipc(
             let idx = args.get("idx").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
             if idx < st.tabs.len() && st.tabs.len() > 1 {
                 st.tabs.remove(idx);
-                if st.current >= st.tabs.len() {
+                if st.current > idx {
+                    st.current -= 1;
+                } else if st.current >= st.tabs.len() {
                     st.current = st.tabs.len() - 1;
                 }
+                let url = st.tabs[st.current].url.clone();
+                drop(st);
+                load_url_in_content(content_webview, &url);
+                return Some(update_state_json(&state.lock().unwrap()));
             }
             Some(update_state_json(&st))
         }
@@ -520,6 +526,10 @@ fn handle_ipc(
                 if st.current >= st.tabs.len() {
                     st.current = st.tabs.len() - 1;
                 }
+                let url = st.tabs[st.current].url.clone();
+                drop(st);
+                load_url_in_content(content_webview, &url);
+                return Some(update_state_json(&state.lock().unwrap()));
             }
             Some(update_state_json(&st))
         }
@@ -529,13 +539,23 @@ fn handle_ipc(
                 let resolved = resolve_input(url);
                 let cur = st.current;
                 let cur_url = st.tabs[cur].url.clone();
-                if !cur_url.is_empty() && cur_url != HOMEPAGE {
+                if !cur_url.is_empty() && cur_url != resolved {
                     let hist_idx = st.tabs[cur].history_idx;
                     if hist_idx < (st.tabs[cur].history.len() as i32 - 1) {
                         st.tabs[cur].history.truncate((hist_idx + 1) as usize);
                     }
-                    st.tabs[cur].history.push(cur_url);
+                    st.tabs[cur].history.push(cur_url.clone());
                     st.tabs[cur].history_idx = (st.tabs[cur].history.len() as i32) - 1;
+                    st.history.push(HistoryEntry {
+                        url: cur_url,
+                        title: st.tabs[cur].title.clone(),
+                        time: chrono_now(),
+                    });
+                    if st.history.len() > MAX_HISTORY {
+                        let excess = st.history.len() - MAX_HISTORY;
+                        st.history.drain(0..excess);
+                    }
+                    save_json_file(&history_path(), &st.history);
                 }
                 st.tabs[cur].url = resolved.clone();
                 st.tabs[cur].title = "Загрузка…".to_string();
@@ -594,8 +614,8 @@ fn handle_ipc(
                     url, title,
                     added: chrono_now(),
                 });
-                save_json_file(&bookmarks_path(), &st.bookmarks);
             }
+            save_json_file(&bookmarks_path(), &st.bookmarks);
             Some(update_state_json(&st))
         }
         "theme" => {
@@ -695,8 +715,8 @@ fn load_url_in_content(content: &Arc<Mutex<Option<WebView>>>, url: &str) {
         // Используем evaluate_script с window.location.href — это НАДЁЖНЕЕ,
         // чем load_url, потому что работает через JS engine, который
         // гарантированно инициализирован в WebView.
-        let js = format!("window.location.href = '{}';", url.replace('\'', "\\'"));
-        println!("[Sierra] JS: {}", js);
+        let encoded_url = serde_json::to_string(url).unwrap_or_else(|_| "\"about:blank\"".to_string());
+        let js = format!("window.location.href = {};", encoded_url);
         match wv.evaluate_script(&js) {
             Ok(_) => println!("[Sierra] navigate via JS OK"),
             Err(e) => {
