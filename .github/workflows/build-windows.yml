@@ -18,17 +18,17 @@ jobs:
       - name: 🦀 Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: 📦 Install Tauri CLI
-        shell: pwsh
-        run: |
-          cargo install tauri-cli --version "^2.0"
-
       - name: 🔨 Build .exe
         shell: pwsh
         run: |
           cd src-tauri
           cargo build --release
-          Copy-Item target/release/sierra.exe ../../sierra.exe
+          # Покажем что в target/release
+          Get-ChildItem target/release/*.exe | Format-Table Name, Length
+          # Копируем .exe в корень репозитория
+          Copy-Item target/release/sierra.exe ../sierra.exe
+          cd ..
+          Get-Item sierra.exe | Format-Table Name, Length
 
       - name: 📊 Show size
         shell: pwsh
@@ -44,6 +44,7 @@ jobs:
           $zipName = "sierra-$tag-windows-x64.zip"
           Compress-Archive -Path sierra.exe -DestinationPath $zipName
           Write-Host "Created: $zipName"
+          Get-Item $zipName | Format-Table Name, Length
 
       - name: ⬆️ Upload artifact
         uses: actions/upload-artifact@v4
