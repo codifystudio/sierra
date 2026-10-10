@@ -1,12 +1,11 @@
-// Sierra v5.0.0 — браузер на Rust (wry + tao, без Tauri)
+// Sierra v5.3.0 — браузер на Rust (wry + tao, ОДНО окно)
 //
 // Архитектура:
-//   - ОДНО окно tao
-//   - ДВА WebView в нём (через wry):
-//     • chrome (сверху, 140px) — HTML интерфейс
-//     • content (снизу) — нативный WebView показывает сайт
-//   - IPC: chrome → Rust через webview.eval() / ipc_handler
-//   - Навигация: content_webview.load_url(url) — прямой вызов wry
+//   - ОДНО окно tao (1200x800)
+//   - ОДИН WebView в нём (HTML интерфейс с iframe для контента)
+//   - Контент сайта показывается в <iframe> прямо в интерфейсе
+//   - IPC: chrome → Rust через webview.ipc_handler
+//   - Навигация: iframe.src = url (прямая установка в JS)
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -21,10 +20,10 @@ use serde_json::Value;
 use tao::{
     event::{Event, WindowEvent, StartCause},
     event_loop::{ControlFlow, EventLoop},
-    window::{WindowBuilder, WindowId},
+    window::WindowBuilder,
     dpi::LogicalSize,
 };
-use wry::{WebViewBuilder, WebView};
+use wry::WebViewBuilder;
 
 // ═══════════════════════════════════════════════════════════════════════
 //  КОНСТАНТЫ
@@ -32,7 +31,6 @@ use wry::{WebViewBuilder, WebView};
 
 const HOMEPAGE: &str = "https://duckduckgo.com";
 const SEARCH_URL: &str = "https://duckduckgo.com/?q={query}";
-const CHROME_HEIGHT: f64 = 140.0;
 const MAX_HISTORY: usize = 500;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -63,7 +61,7 @@ struct HistoryEntry {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  STATE — общее состояние браузера
+//  STATE
 // ═══════════════════════════════════════════════════════════════════════
 
 struct State {
@@ -158,14 +156,15 @@ fn resolve_input(text: &str) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  HTML CHROME (рендерится в chrome WebView)
+//  HTML INTERFACE (одно окно, iframe для контента)
 // ═══════════════════════════════════════════════════════════════════════
 
 fn chrome_html(state: &State) -> String {
     let tabs_html: String = state.tabs.iter().enumerate().map(|(i, t)| {
         let active = if i == state.current { "active" } else { "" };
         let title = if t.title.is_empty() { "Без названия".to_string() } else { t.title.clone() };
-        let truncated = if title.len() > 28 { format!("{}…", &title[..28]) } else { title };
+        let truncated: String = title.chars().take(28).collect();
+        let truncated = if title.chars().count() > 28 { format!("{}…", truncated) } else { truncated };
         let safe = html_escape(&truncated);
         format!(
             r#"<div class="tab {active}" data-idx="{i}"><span class="tab-title">{safe}</span><span class="tab-close" data-idx="{i}">×</span></div>"#,
@@ -183,10 +182,11 @@ fn chrome_html(state: &State) -> String {
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http:; img-src * data: blob:; frame-src * https: http:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'">
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: 'SF Pro Display', 'Segoe UI', sans-serif; }}
 :root {{ --red: #fc3f1d; --yellow: #ffcc00; }}
-html, body {{ height: 100vh; overflow: hidden; -webkit-user-select: none; user-select: none; }}
+html, body {{ height: 100vh; overflow: hidden; -webkit-user-select: none; user-select: none; display: flex; flex-direction: column; }}
 body.dark {{ background: #1c1c1e; color: #fff; }}
 body.light {{ background: #f5f5f7; color: #1c1c1e; }}
 
@@ -205,7 +205,6 @@ body.dark .new-tab-btn {{ color: #d4d4d8; }}
 body.dark .new-tab-btn:hover {{ background: #3a3a3d; }}
 body.dark .menu {{ background: #2a2a2d; border: 1px solid #3a3a3d; }}
 body.dark .menu-item:hover {{ background: var(--red); color: #fff; }}
-body.dark .menu-item:hover svg {{ stroke: #fff; }}
 body.dark .status {{ background: #2a2a2d; color: #8a8a8e; border-top: 2px solid var(--red); }}
 body.dark .progress-fill {{ background: var(--red); }}
 body.dark .start-search {{ background: #3a3a3d; color: #fff; border: 1.5px solid rgba(255,255,255,0.05); }}
@@ -229,7 +228,7 @@ body.light .status {{ background: #e8e8ed; color: #5a5a5e; border-top: 2px solid
 body.light .start-search {{ background: #fff; color: #1c1c1e; border: 1px solid #d8d8dd; }}
 body.light .shortcut {{ background: rgba(0,0,0,0.04); }}
 
-.tab-strip {{ display: flex; align-items: flex-start; padding: 6px 8px 0 8px; gap: 2px; min-height: 38px; }}
+.tab-strip {{ display: flex; align-items: flex-start; padding: 6px 8px 0 8px; gap: 2px; min-height: 38px; flex-shrink: 0; }}
 .tabs {{ display: flex; gap: 2px; flex: 1; overflow-x: auto; scrollbar-width: none; }}
 .tabs::-webkit-scrollbar {{ display: none; }}
 .tab {{ display: flex; align-items: center; padding: 6px 8px 6px 12px; border-radius: 10px; cursor: pointer; min-width: 120px; max-width: 220px; height: 32px; flex-shrink: 0; }}
@@ -238,7 +237,7 @@ body.light .shortcut {{ background: rgba(0,0,0,0.04); }}
 .tab-close:hover {{ background: rgba(252,63,29,0.25); color: #fff; }}
 .new-tab-btn {{ width: 28px; height: 28px; border-radius: 50%; border: none; background: transparent; cursor: pointer; font-size: 20px; font-weight: bold; display: flex; align-items: center; justify-content: center; margin: 4px 0 0 6px; flex-shrink: 0; }}
 
-.toolbar {{ display: flex; align-items: center; padding: 6px 10px; gap: 4px; }}
+.toolbar {{ display: flex; align-items: center; padding: 6px 10px; gap: 4px; flex-shrink: 0; }}
 .nav-btn {{ width: 34px; height: 34px; border-radius: 50%; border: none; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }}
 .nav-btn svg {{ width: 18px; height: 18px; }}
 .nav-btn:disabled {{ opacity: 0.3; cursor: default; }}
@@ -248,13 +247,7 @@ body.light .shortcut {{ background: rgba(0,0,0,0.04); }}
 .menu {{ position: absolute; top: 76px; right: 10px; border-radius: 10px; padding: 8px; min-width: 240px; display: none; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }}
 .menu.show {{ display: block; }}
 .menu-item {{ padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 12px; }}
-.menu-item svg {{ width: 16px; height: 16px; flex-shrink: 0; }}
-.menu-sep {{ height: 1px; margin: 4px 8px; opacity: 0.3; background: currentColor; }}
 .menu-sc {{ margin-left: auto; opacity: 0.5; font-size: 11px; }}
-
-.status {{ padding: 4px 12px; font-size: 11px; display: flex; align-items: center; gap: 10px; min-height: 22px; }}
-.progress {{ flex: 1; height: 3px; background: rgba(128,128,128,0.1); border-radius: 1px; overflow: hidden; max-width: 200px; }}
-.progress-fill {{ height: 100%; width: 0; border-radius: 1px; transition: width 0.2s; }}
 
 .start-page {{ flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; overflow-y: auto; }}
 .start-logo {{ font-size: 48px; font-weight: 200; letter-spacing: -3px; margin-bottom: 20px; background: linear-gradient(135deg, var(--red), var(--yellow)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }}
@@ -263,6 +256,12 @@ body.light .shortcut {{ background: rgba(0,0,0,0.04); }}
 .shortcut {{ padding: 12px 8px; border-radius: 10px; text-align: center; cursor: pointer; font-size: 11px; }}
 .shortcut-icon {{ width: 40px; height: 40px; border-radius: 50%; margin: 0 auto 6px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; }}
 .hint {{ margin-top: 20px; font-size: 11px; opacity: 0.5; text-align: center; }}
+
+#content-frame {{ flex: 1; width: 100%; border: none; background: #fff; }}
+
+.status {{ padding: 4px 12px; font-size: 11px; display: flex; align-items: center; gap: 10px; min-height: 22px; flex-shrink: 0; }}
+.progress {{ flex: 1; height: 3px; background: rgba(128,128,128,0.1); border-radius: 1px; overflow: hidden; max-width: 200px; }}
+.progress-fill {{ height: 100%; width: 0; border-radius: 1px; transition: width 0.2s; }}
 </style>
 </head>
 <body class="{theme}">
@@ -298,7 +297,6 @@ body.light .shortcut {{ background: rgba(0,0,0,0.04); }}
   <div class="menu-item" data-act="new"><span>Новая вкладка</span><span class="menu-sc">Ctrl+T</span></div>
   <div class="menu-item" data-act="bookmarks"><span>Закладки</span></div>
   <div class="menu-item" data-act="history"><span>История</span><span class="menu-sc">Ctrl+H</span></div>
-  <div class="menu-sep"></div>
   <div class="menu-item" data-act="theme"><span>Сменить тему</span><span class="menu-sc">Ctrl+Shift+T</span></div>
   <div class="menu-item" data-act="clear"><span>Очистить историю</span></div>
 </div>
@@ -310,26 +308,39 @@ body.light .shortcut {{ background: rgba(0,0,0,0.04); }}
   <div class="hint">Ctrl+T — новая вкладка · Ctrl+L — адрес · Ctrl+W — закрыть</div>
 </div>
 
+<iframe id="content-frame" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation" style="display:none"></iframe>
+
 <div class="status">
   <span id="status">Готово</span>
   <div class="progress" id="prog" style="display:none"><div class="progress-fill" id="progFill"></div></div>
 </div>
 
 <script>
+let currentUrl = '';
+let bookmarks = [];
+
 // IPC через wry: window.ipc.postMessage
 function send(cmd, args) {{
   const msg = JSON.stringify({{cmd, args: args || {{}}}});
   if (window.ipc && window.ipc.postMessage) {{
     window.ipc.postMessage(msg);
   }} else {{
-    console.log('IPC НЕ ДОСТУПЕН');
+    console.log('IPC недоступен:', msg);
   }}
 }}
 
 // Кнопки навигации
 document.getElementById('btnBack').onclick = () => send('back');
 document.getElementById('btnFwd').onclick = () => send('forward');
-document.getElementById('btnRefresh').onclick = () => send('refresh');
+document.getElementById('btnRefresh').onclick = () => {{
+  const frame = document.getElementById('content-frame');
+  if (frame.src && currentUrl !== HOMEPAGE) {{
+    // Перезагружаем iframe
+    const src = frame.src;
+    frame.src = 'about:blank';
+    setTimeout(() => {{ frame.src = src; }}, 50);
+  }}
+}};
 document.getElementById('btnHome').onclick = () => send('home');
 document.getElementById('btnNew').onclick = () => send('new_tab');
 document.getElementById('btnBm').onclick = () => send('toggle_bookmark');
@@ -337,6 +348,8 @@ document.getElementById('btnMenu').onclick = (e) => {{
   e.stopPropagation();
   document.getElementById('menu').classList.toggle('show');
 }};
+
+const HOMEPAGE = 'https://duckduckgo.com';
 
 // Адресная строка
 const addr = document.getElementById('addr');
@@ -346,7 +359,6 @@ addr.addEventListener('keydown', (e) => {{
     addr.blur();
   }} else if (e.key === 'Escape') addr.blur();
 }});
-addr.addEventListener('focus', () => addr.select());
 
 // Поиск на стартовой
 const search = document.getElementById('search');
@@ -395,7 +407,7 @@ document.addEventListener('keydown', (e) => {{
   else if (e.altKey && e.key === 'ArrowLeft') {{ e.preventDefault(); send('back'); }}
   else if (e.altKey && e.key === 'ArrowRight') {{ e.preventDefault(); send('forward'); }}
   else if (e.altKey && e.key === 'Home') {{ e.preventDefault(); send('home'); }}
-  else if (e.key === 'F5') {{ e.preventDefault(); send('refresh'); }}
+  else if (e.key === 'F5') {{ e.preventDefault(); document.getElementById('btnRefresh').click(); }}
   else if (e.key === 'Escape') document.getElementById('menu').classList.remove('show');
 }});
 
@@ -419,33 +431,44 @@ SHORTCUTS.forEach(s => {{
   sc.appendChild(el);
 }});
 
-// Глобальный объект для приёма команд от Rust (через webview.eval)
+// Получение команд от Rust
 window.sierra_update = function(state) {{
-  // state = {{tabs: [...], current, theme, address, bookmarked, status, progress}}
   if (state.tabs) {{
     const tabsEl = document.getElementById('tabs');
     tabsEl.innerHTML = state.tabs.map((t, i) => {{
       const active = i === state.current ? 'active' : '';
-      const title = (t.title || 'Без названия').substring(0, 28) + ((t.title || '').length > 28 ? '…' : '');
-      const safe = title.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const title = (t.title || 'Без названия');
+      const truncated = title.length > 28 ? title.substring(0, 28) + '…' : title;
+      const safe = truncated.replace(/</g, '&lt;').replace(/>/g, '&gt;');
       return `<div class="tab ${{active}}" data-idx="${{i}}"><span class="tab-title">${{safe}}</span><span class="tab-close" data-idx="${{i}}">×</span></div>`;
     }}).join('');
   }}
   if (state.theme) document.body.className = state.theme;
-  if (state.address !== undefined && document.activeElement !== addr) addr.value = state.address;
-  if (state.bookmarked) document.getElementById('btnBm').classList.add('bookmark-active');
-  else document.getElementById('btnBm').classList.remove('bookmark-active');
-  if (state.status !== undefined) document.getElementById('status').textContent = state.status;
-  if (state.progress !== undefined) {{
-    document.getElementById('prog').style.display = state.progress < 100 ? 'block' : 'none';
-    document.getElementById('progFill').style.width = state.progress + '%';
+  if (state.address !== undefined && document.activeElement !== addr) {{
+    addr.value = state.address;
+    currentUrl = state.address;
+  }}
+  if (state.bookmarked !== undefined) {{
+    if (state.bookmarked) document.getElementById('btnBm').classList.add('bookmark-active');
+    else document.getElementById('btnBm').classList.remove('bookmark-active');
   }}
   if (state.showStart !== undefined) {{
     document.getElementById('start').style.display = state.showStart ? 'flex' : 'none';
+    document.getElementById('content-frame').style.display = state.showStart ? 'none' : 'block';
+  }}
+  if (state.contentUrl !== undefined && state.contentUrl) {{
+    // Навигация iframe на URL контента
+    const frame = document.getElementById('content-frame');
+    if (frame.src !== state.contentUrl) {{
+      frame.src = state.contentUrl;
+    }}
+  }}
+  if (state.bookmarks !== undefined) {{
+    bookmarks = state.bookmarks;
   }}
 }};
 
-console.log('Sierra init OK, IPC: ' + (window.ipc ? 'yes' : 'no'));
+// Запрос начального состояния
 send('init');
 </script>
 </body>
@@ -453,32 +476,25 @@ send('init');
 }
 
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 //  ОБРАБОТКА IPC СООБЩЕНИЙ
 // ═══════════════════════════════════════════════════════════════════════
 
-fn handle_ipc(
-    msg: &str,
-    state: &Arc<Mutex<State>>,
-    content_webview: &Arc<Mutex<Option<WebView>>>,
-) -> Option<String> {
+fn handle_ipc(msg: &str, state: &Arc<Mutex<State>>) -> Option<String> {
     let v: Value = match serde_json::from_str(msg) {
         Ok(v) => v,
-        Err(e) => return Some(format!("IPC parse error: {}", e)),
+        Err(e) => return Some(format!("console.error('IPC parse error: {}')", e)),
     };
     let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
     let args = v.get("args").cloned().unwrap_or(Value::Null);
 
-    let mut st = state.lock().unwrap();
+    let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
 
     let result = match cmd {
-        "init" => {
-            // Первый запрос — отдаём состояние
-            Some(update_state_json(&st))
-        }
+        "init" => Some(update_state_json(&st)),
         "new_tab" => {
             let id = st.next_id;
             st.next_id += 1;
@@ -496,12 +512,10 @@ fn handle_ipc(
             let idx = args.get("idx").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
             if idx < st.tabs.len() {
                 st.current = idx;
-                let url = st.tabs[idx].url.clone();
-                drop(st);
-                load_url_in_content(content_webview, &url);
-                return Some(update_state_json(&state.lock().unwrap()));
+                Some(update_state_json(&st))
+            } else {
+                None
             }
-            None
         }
         "close_tab" => {
             let idx = args.get("idx").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
@@ -529,6 +543,7 @@ fn handle_ipc(
                 let resolved = resolve_input(url);
                 let cur = st.current;
                 let cur_url = st.tabs[cur].url.clone();
+                // Сохраняем текущий URL в историю вкладки
                 if !cur_url.is_empty() && cur_url != HOMEPAGE {
                     let hist_idx = st.tabs[cur].history_idx;
                     if hist_idx < (st.tabs[cur].history.len() as i32 - 1) {
@@ -539,49 +554,68 @@ fn handle_ipc(
                 }
                 st.tabs[cur].url = resolved.clone();
                 st.tabs[cur].title = "Загрузка…".to_string();
-                drop(st);
-                load_url_in_content(content_webview, &resolved);
-                return Some(update_state_json(&state.lock().unwrap()));
+
+                // Добавляем в глобальную историю
+                let title = resolved.clone();
+                st.history.push(HistoryEntry {
+                    url: resolved.clone(),
+                    title: "Загрузка…".to_string(),
+                    time: chrono_now(),
+                });
+                if st.history.len() > MAX_HISTORY {
+                    let start = st.history.len() - MAX_HISTORY;
+                    st.history = st.history.split_off(start);
+                }
+                save_json_file(&history_path(), &st.history);
+
+                Some(update_state_json(&st))
+            } else {
+                None
             }
-            None
         }
         "back" => {
             let cur = st.current;
-            if st.tabs[cur].history_idx > 0 {
-                st.tabs[cur].history_idx -= 1;
-                let url = st.tabs[cur].history[st.tabs[cur].history_idx as usize].clone();
+            if st.tabs[cur].history_idx >= 0 && !st.tabs[cur].history.is_empty() {
+                let new_idx = (st.tabs[cur].history_idx - 1).max(0);
+                st.tabs[cur].history_idx = new_idx;
+                let url = st.tabs[cur].history[new_idx as usize].clone();
                 st.tabs[cur].url = url.clone();
-                drop(st);
-                load_url_in_content(content_webview, &url);
-                return Some(update_state_json(&state.lock().unwrap()));
+                Some(update_state_json(&st))
+            } else {
+                None
             }
-            None
         }
         "forward" => {
             let cur = st.current;
-            if st.tabs[cur].history_idx < (st.tabs[cur].history.len() as i32 - 1) {
+            let hist_len = st.tabs[cur].history.len() as i32;
+            if st.tabs[cur].history_idx < hist_len - 1 {
                 st.tabs[cur].history_idx += 1;
-                let url = st.tabs[cur].history[st.tabs[cur].history_idx as usize].clone();
+                let idx = st.tabs[cur].history_idx as usize;
+                let url = st.tabs[cur].history[idx].clone();
                 st.tabs[cur].url = url.clone();
-                drop(st);
-                load_url_in_content(content_webview, &url);
-                return Some(update_state_json(&state.lock().unwrap()));
+                Some(update_state_json(&st))
+            } else {
+                None
             }
-            None
         }
         "refresh" => {
-            let url = st.tabs[st.current].url.clone();
-            drop(st);
-            load_url_in_content(content_webview, &url);
-            None
+            // JS сам перезагружает iframe, тут просто возвращаем состояние
+            Some(update_state_json(&st))
         }
         "home" => {
             let cur = st.current;
+            let cur_url = st.tabs[cur].url.clone();
+            if !cur_url.is_empty() && cur_url != HOMEPAGE {
+                let hist_idx = st.tabs[cur].history_idx;
+                if hist_idx < (st.tabs[cur].history.len() as i32 - 1) {
+                    st.tabs[cur].history.truncate((hist_idx + 1) as usize);
+                }
+                st.tabs[cur].history.push(cur_url);
+                st.tabs[cur].history_idx = (st.tabs[cur].history.len() as i32) - 1;
+            }
             st.tabs[cur].url = HOMEPAGE.to_string();
             st.tabs[cur].title = "Новая вкладка".to_string();
-            drop(st);
-            load_url_in_content(content_webview, HOMEPAGE);
-            Some(update_state_json(&state.lock().unwrap()))
+            Some(update_state_json(&st))
         }
         "toggle_bookmark" => {
             let url = st.tabs[st.current].url.clone();
@@ -594,8 +628,8 @@ fn handle_ipc(
                     url, title,
                     added: chrono_now(),
                 });
-                save_json_file(&bookmarks_path(), &st.bookmarks);
             }
+            save_json_file(&bookmarks_path(), &st.bookmarks);
             Some(update_state_json(&st))
         }
         "theme" => {
@@ -604,25 +638,51 @@ fn handle_ipc(
             Some(update_state_json(&st))
         }
         "history" => {
-            // Показать историю в content
             let html = build_history_html(&st.history);
-            drop(st);
-            load_html_in_content(content_webview, &html);
-            None
+            let encoded = url_encode(&html);
+            let data_url = format!("data:text/html;charset=utf-8,{}", encoded);
+            Some(update_state_with_content(&st, Some(data_url)))
         }
         "bookmarks" => {
             let html = build_bookmarks_html(&st.bookmarks);
-            drop(st);
-            load_html_in_content(content_webview, &html);
-            None
+            let encoded = url_encode(&html);
+            let data_url = format!("data:text/html;charset=utf-8,{}", encoded);
+            Some(update_state_with_content(&st, Some(data_url)))
         }
         "clear" => {
             st.history.clear();
             save_json_file(&history_path(), &st.history);
-            None
+            Some(update_state_json(&st))
         }
-        _ => Some(format!("Unknown cmd: {}", cmd)),
+        _ => None,
     };
+    result
+}
+
+fn url_encode(s: &str) -> String {
+    let mut result = String::new();
+    for c in s.chars() {
+        match c {
+            ' ' => result.push_str("%20"),
+            '\'' => result.push_str("%27"),
+            '"' => result.push_str("%22"),
+            '<' => result.push_str("%3C"),
+            '>' => result.push_str("%3E"),
+            '#' => result.push_str("%23"),
+            '%' => result.push_str("%25"),
+            '&' => result.push_str("%26"),
+            '+' => result.push_str("%2B"),
+            '{' => result.push_str("%7B"),
+            '}' => result.push_str("%7D"),
+            '\n' | '\r' => {} // пропускаем переводы строк
+            _ if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' || c == '/' || c == ':' || c == ';' || c == '=' => result.push(c),
+            _ => {
+                for byte in c.to_string().as_bytes() {
+                    result.push_str(&format!("%{:02X}", byte));
+                }
+            }
+        }
+    }
     result
 }
 
@@ -667,10 +727,15 @@ fn build_bookmarks_html(bookmarks: &[Bookmark]) -> String {
 }
 
 fn update_state_json(state: &State) -> String {
+    update_state_with_content(state, None)
+}
+
+fn update_state_with_content(state: &State, content_override: Option<String>) -> String {
     let cur = state.current;
     let address = state.tabs.get(cur).map(|t| t.url.clone()).unwrap_or_default();
     let bookmarked = state.bookmarks.iter().any(|b| b.url == address) && address != HOMEPAGE;
     let show_start = address == HOMEPAGE || address.is_empty();
+    let content_url = if let Some(c) = content_override { c } else if show_start { String::new() } else { address.clone() };
 
     let state_json = serde_json::json!({
         "tabs": state.tabs.iter().map(|t| serde_json::json!({
@@ -679,6 +744,7 @@ fn update_state_json(state: &State) -> String {
         "current": cur,
         "theme": state.theme,
         "address": address,
+        "contentUrl": content_url,
         "bookmarked": bookmarked,
         "showStart": show_start,
     });
@@ -686,123 +752,53 @@ fn update_state_json(state: &State) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  НАВИГАЦИЯ В CONTENT WEBVIEW
-// ═══════════════════════════════════════════════════════════════════════
-
-fn load_url_in_content(content: &Arc<Mutex<Option<WebView>>>, url: &str) {
-    println!("[Sierra] Loading URL in content: {}", url);
-    if let Some(ref wv) = *content.lock().unwrap() {
-        // Используем evaluate_script с window.location.href — это НАДЁЖНЕЕ,
-        // чем load_url, потому что работает через JS engine, который
-        // гарантированно инициализирован в WebView.
-        let js = format!("window.location.href = '{}';", url.replace('\'', "\\'"));
-        println!("[Sierra] JS: {}", js);
-        match wv.evaluate_script(&js) {
-            Ok(_) => println!("[Sierra] navigate via JS OK"),
-            Err(e) => {
-                println!("[Sierra] evaluate_script error: {}, trying load_url", e);
-                // Fallback на load_url
-                match wv.load_url(url) {
-                    Ok(_) => println!("[Sierra] load_url OK (fallback)"),
-                    Err(e2) => println!("[Sierra] load_url error: {}", e2),
-                }
-            }
-        }
-    } else {
-        println!("[Sierra] content webview is None!");
-    }
-}
-
-fn load_html_in_content(content: &Arc<Mutex<Option<WebView>>>, html: &str) {
-    if let Some(ref wv) = *content.lock().unwrap() {
-        let _ = wv.load_html(html);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-//  TOCHKA VХODA
+//  TOЧKA VХODA — ОДНО окно, ОДИН WebView
 // ═══════════════════════════════════════════════════════════════════════
 
 fn main() -> wry::Result<()> {
     let event_loop = EventLoop::new();
 
-    // === Главное окно (chrome) — узкое, 140px высотой ===
-    let chrome_window = WindowBuilder::new()
+    // === ОДНО окно (полноценный браузер) ===
+    let window = WindowBuilder::new()
         .with_title("Sierra")
-        .with_inner_size(LogicalSize::new(1200.0, 140.0))
-        .with_min_inner_size(LogicalSize::new(600.0, 140.0))
+        .with_inner_size(LogicalSize::new(1200.0, 800.0))
+        .with_min_inner_size(LogicalSize::new(600.0, 400.0))
         .with_resizable(true)
         .build(&event_loop)
         .unwrap();
-    let chrome_window_id = chrome_window.id();
 
     let state = Arc::new(Mutex::new(State::new()));
-    let content_webview: Arc<Mutex<Option<WebView>>> = Arc::new(Mutex::new(None));
-    let chrome_webview_ref: Arc<Mutex<Option<WebView>>> = Arc::new(Mutex::new(None));
 
-    // Создаём chrome WebView с IPC handler
+    // === webview в Arc, чтобы IPC handler мог вызывать evaluate_script ===
+    let webview_arc: Arc<Mutex<Option<wry::WebView>>> = Arc::new(Mutex::new(None));
+
     let state_for_ipc = state.clone();
-    let content_for_ipc = content_webview.clone();
-    let chrome_for_ipc = chrome_webview_ref.clone();
-    let chrome_html_str = {
+    let webview_ref = webview_arc.clone();
+    let html_str = {
         let st = state.lock().unwrap();
         chrome_html(&st)
     };
-    let chrome_wv = WebViewBuilder::new()
-        .with_html(chrome_html_str)
+    let webview = WebViewBuilder::new()
+        .with_html(html_str)
         .with_ipc_handler(move |request: wry::http::Request<String>| {
             let body = request.body();
-            println!("[Sierra IPC] {}", body);
-            if let Some(response) = handle_ipc(body, &state_for_ipc, &content_for_ipc) {
-                if let Some(ref wv) = *chrome_for_ipc.lock().unwrap() {
+            if let Some(response) = handle_ipc(body, &state_for_ipc) {
+                if let Some(ref wv) = *webview_ref.lock().unwrap() {
                     let _ = wv.evaluate_script(&response);
                 }
             }
         })
-        .build(&chrome_window)?;
-    *chrome_webview_ref.lock().unwrap() = Some(chrome_wv);
+        .build(&window)?;
+    *webview_arc.lock().unwrap() = Some(webview);
 
-    // === Окно контента — под chrome, без декораций ===
-    let content_window = WindowBuilder::new()
-        .with_title("Sierra Content")
-        .with_inner_size(LogicalSize::new(1200.0, 600.0))
-        .with_decorations(false)
-        .with_resizable(true)
-        .build(&event_loop)
-        .unwrap();
-    let content_window_id = content_window.id();
-
-    // Позиционируем content под chrome
-    if let Ok(chrome_pos) = chrome_window.outer_position() {
-        let chrome_size = chrome_window.outer_size();
-        let _ = content_window.set_outer_position(tao::dpi::PhysicalPosition::new(
-            chrome_pos.x,
-            chrome_pos.y + chrome_size.height as i32,
-        ));
-    }
-
-    // Создаём content WebView (нативный, с URL)
-    let content_wv = WebViewBuilder::new()
-        .with_url(HOMEPAGE)
-        .with_ipc_handler(move |_req: wry::http::Request<String>| {})
-        .build(&content_window)?;
-    *content_webview.lock().unwrap() = Some(content_wv);
-
-    // Фокус на chrome_window (чтобы пользователь видел тулбар)
-    chrome_window.set_focus();
-
-    // Отправляем начальное состояние в chrome
+    // Отправляем начальное состояние
     {
         let st = state.lock().unwrap();
         let update = update_state_json(&st);
-        if let Some(ref wv) = *chrome_webview_ref.lock().unwrap() {
+        if let Some(ref wv) = *webview_arc.lock().unwrap() {
             let _ = wv.evaluate_script(&update);
         }
     }
-
-    // Храним ID окон для обработки событий
-    let chrome_id = chrome_window_id;
-    let content_id = content_window_id;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -810,41 +806,9 @@ fn main() -> wry::Result<()> {
             Event::NewEvents(StartCause::Init) => {
                 println!("[Sierra] Started");
             }
-            Event::WindowEvent { event: WindowEvent::CloseRequested, window_id, .. } => {
-                if window_id == chrome_id || window_id == content_id {
-                    // Закрыли любое окно — выходим
-                    chrome_window.set_visible(false);
-                    content_window.set_visible(false);
-                    *control_flow = ControlFlow::Exit;
-                }
-            }
-            Event::WindowEvent { event: WindowEvent::Resized(_), window_id, .. } => {
-                // При resize chrome — двигаем content
-                if window_id == chrome_id {
-                    if let Ok(chrome_pos) = chrome_window.outer_position() {
-                        let chrome_size = chrome_window.outer_size();
-                        let _ = content_window.set_outer_position(tao::dpi::PhysicalPosition::new(
-                            chrome_pos.x,
-                            chrome_pos.y + chrome_size.height as i32,
-                        ));
-                        let _ = content_window.set_inner_size(LogicalSize::new(
-                            chrome_size.width as f64,
-                            600.0,
-                        ));
-                    }
-                }
-            }
-            Event::WindowEvent { event: WindowEvent::Moved(_), window_id, .. } => {
-                // При движении chrome — двигаем content
-                if window_id == chrome_id {
-                    if let Ok(chrome_pos) = chrome_window.outer_position() {
-                        let chrome_size = chrome_window.outer_size();
-                        let _ = content_window.set_outer_position(tao::dpi::PhysicalPosition::new(
-                            chrome_pos.x,
-                            chrome_pos.y + chrome_size.height as i32,
-                        ));
-                    }
-                }
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                window.set_visible(false);
+                *control_flow = ControlFlow::Exit;
             }
             _ => {}
         }
