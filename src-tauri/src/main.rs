@@ -414,7 +414,16 @@ const sc = document.getElementById('shortcuts');
 SHORTCUTS.forEach(s => {{
   const el = document.createElement('div');
   el.className = 'shortcut';
-  el.innerHTML = `<div class="shortcut-icon" style="color:${{s.fg}};background:${{s.color}}">${{s.icon}}</div><div>${{s.name}}</div>`;
+
+  const icon = document.createElement('div');
+  icon.className = 'shortcut-icon';
+  icon.style.color = s.fg;
+  icon.style.backgroundColor = s.color;
+  icon.textContent = s.icon;
+
+  const name = document.createElement('div');
+  name.textContent = s.name;
+  el.append(icon, name);
   el.onclick = () => send('navigate', {{url: s.url}});
   sc.appendChild(el);
 }});
@@ -424,12 +433,25 @@ window.sierra_update = function(state) {{
   // state = {{tabs: [...], current, theme, address, bookmarked, status, progress}}
   if (state.tabs) {{
     const tabsEl = document.getElementById('tabs');
-    tabsEl.innerHTML = state.tabs.map((t, i) => {{
-      const active = i === state.current ? 'active' : '';
-      const title = (t.title || 'Без названия').substring(0, 28) + ((t.title || '').length > 28 ? '…' : '');
-      const safe = title.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      return `<div class="tab ${{active}}" data-idx="${{i}}"><span class="tab-title">${{safe}}</span><span class="tab-close" data-idx="${{i}}">×</span></div>`;
-    }}).join('');
+    tabsEl.replaceChildren();
+    state.tabs.forEach((t, i) => {{
+      const tab = document.createElement('div');
+      tab.className = 'tab' + (i === state.current ? ' active' : '');
+      tab.dataset.idx = String(i);
+
+      const title = document.createElement('span');
+      title.className = 'tab-title';
+      const rawTitle = t.title || 'Без названия';
+      title.textContent = rawTitle.substring(0, 28) + (rawTitle.length > 28 ? '…' : '');
+
+      const close = document.createElement('span');
+      close.className = 'tab-close';
+      close.dataset.idx = String(i);
+      close.textContent = '×';
+
+      tab.append(title, close);
+      tabsEl.appendChild(tab);
+    }});
   }}
   if (state.theme) document.body.className = state.theme;
   if (state.address !== undefined && document.activeElement !== addr) addr.value = state.address;
