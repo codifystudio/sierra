@@ -373,21 +373,27 @@ fn open_content(app: AppHandle, url: String) -> Result<(), String> {
     let width = size.width as f64;
     let height = DEFAULT_CONTENT_HEIGHT;
 
-    let parsed_url: tauri::Url = url.parse().map_err(|e: url::ParseError| e.to_string())?;
+    // Парсим URL — поддержка как https://, так и data:
+    let parsed_url: tauri::Url = match url.parse() {
+        Ok(u) => u,
+        Err(e) => return Err(format!("URL parse error: {} for url: {}", e, url)),
+    };
 
     if let Some(content) = app.get_webview_window("content") {
         // Окно уже существует — навигируем
-        content.navigate(parsed_url).map_err(|e| e.to_string())?;
-        content.set_position(LogicalPosition::new(x, y)).map_err(|e| e.to_string())?;
-        content.set_size(LogicalSize::new(width, height)).map_err(|e| e.to_string())?;
-        content.show().map_err(|e| e.to_string())?;
-        content.set_focus().map_err(|e| e.to_string())?;
+        eprintln!("[Sierra] Navigating existing content to: {}", url);
+        content.navigate(parsed_url).map_err(|e| format!("navigate: {}", e))?;
+        content.set_position(LogicalPosition::new(x, y)).map_err(|e| format!("pos: {}", e))?;
+        content.set_size(LogicalSize::new(width, height)).map_err(|e| format!("size: {}", e))?;
+        content.show().map_err(|e| format!("show: {}", e))?;
+        content.set_focus().map_err(|e| format!("focus: {}", e))?;
     } else {
         // Создаём новое окно контента
+        eprintln!("[Sierra] Creating content window, url: {}", url);
         let content = tauri::WebviewWindow::builder(
             &app,
             "content",
-            tauri::WebviewUrl::External(parsed_url),
+            tauri::WebviewUrl::External(parsed_url.clone()),
         )
         .title("Sierra")
         .position(x, y)
@@ -395,7 +401,10 @@ fn open_content(app: AppHandle, url: String) -> Result<(), String> {
         .decorations(false)
         .visible(true)
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("create content window: {}", e))?;
+
+        // Дополнительно явно навигируем (на случай если External не сработал)
+        let _ = content.navigate(parsed_url);
 
         // При закрытии content — закрываем main
         let app_handle = app.clone();
@@ -430,6 +439,16 @@ fn focus_main(app: AppHandle) -> Result<(), String> {
         main.set_focus().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+fn get_content_url(app: AppHandle) -> Result<Option<String>, String> {
+    if let Some(content) = app.get_webview_window("content") {
+        if let Ok(url) = content.url() {
+            return Ok(Some(url.to_string()));
+        }
+    }
+    Ok(None)
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -544,6 +563,7 @@ fn main() {
             open_content,
             hide_content,
             focus_main,
+            get_content_url,
             get_bookmarks,
             is_bookmarked,
             toggle_bookmark,

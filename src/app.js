@@ -361,18 +361,33 @@ async function showWebview(url) {
     if (statusText) statusText.textContent = 'Загрузка: ' + url;
 
     try {
+        showDebug('open_content called: ' + url);
         await invoke('open_content', { url });
-        showDebug('open_content OK: ' + url);
-        setTimeout(() => { if (progressFill) progressFill.style.width = '70%'; }, 200);
+        showDebug('open_content returned OK');
+        // Прогресс-симуляция
+        setTimeout(() => { if (progressFill) progressFill.style.width = '70%'; }, 300);
         setTimeout(() => {
             if (progressFill) progressFill.style.width = '100%';
-            setTimeout(() => { if (progress) progress.style.display = 'none'; }, 300);
-        }, 800);
+            setTimeout(() => { if (progress) progress.style.display = 'none'; }, 400);
+        }, 1500);
 
-        const title = url.replace(/^https?:\/\//, '').split('/')[0];
-        await invoke('update_tab_title', { title });
-        await invoke('add_to_history', { url, title });
-        await refreshTabs();
+        // Получаем URL от content окна (для обновления title)
+        try {
+            const actualUrl = await invoke('get_content_url');
+            showDebug('content_url: ' + (actualUrl || 'null'));
+            const finalUrl = actualUrl || url;
+            const title = finalUrl.replace(/^https?:\/\//, '').split('/')[0];
+            await invoke('update_tab_title', { title });
+            await invoke('add_to_history', { url: finalUrl, title });
+            await refreshTabs();
+        } catch (e) {
+            showDebugError('get_content_url failed', e);
+            // Fallback: используем исходный URL
+            const title = url.replace(/^https?:\/\//, '').split('/')[0];
+            await invoke('update_tab_title', { title });
+            await invoke('add_to_history', { url, title });
+            await refreshTabs();
+        }
     } catch (e) {
         showDebugError('open_content error', e);
         if (statusText) statusText.textContent = 'Ошибка: ' + e;
