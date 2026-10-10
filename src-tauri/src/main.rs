@@ -1,24 +1,22 @@
 // Sierra Browser — Rust backend
 // Лёгкий браузер с гибрид-дизайном Яндекс + Chrome + Safari
 //
-// Структура:
-//   - TabsState — управление вкладками (с навигацией, историей)
-//   - BookmarksState — закладки
-//   - HistoryState — история (до 500 записей)
-//   - SettingsState — настройки (тема)
-//
-// Все Tauri-команды (#[tauri::command]) доступны из JS как
-//   window.__TAURI__.invoke('command_name', { args })
+// Архитектура:
+//   - Главное окно (main) — chrome: вкладки, тулбар, адресная строка
+//   - Окно контента (content) — нативный WebView, показывает сайт
+//   - Синхронизация позиций окон через события
 
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, Manager, State, WindowEvent, LogicalPosition, LogicalSize};
 use chrono::Utc;
+
 // ═══════════════════════════════════════════════════════════════════════
 //  КОНСТАНТЫ
 // ═══════════════════════════════════════════════════════════════════════
@@ -26,6 +24,11 @@ use chrono::Utc;
 const HOMEPAGE: &str = "https://duckduckgo.com";
 const SEARCH_URL: &str = "https://duckduckgo.com/?q={query}";
 const MAX_HISTORY: usize = 500;
+const CHROME_HEIGHT: f64 = 140.0;
+const DEFAULT_CONTENT_HEIGHT: f64 = 600.0;
+
+// Флаг для предотвращения бесконечной рекурсии при синхронизации окон
+static SYNCING: AtomicBool = AtomicBool::new(false);
 
 // ═══════════════════════════════════════════════════════════════════════
 //  МОДЕЛИ ДАННЫХ
@@ -88,7 +91,7 @@ pub struct SettingsState {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  КОНФИГУРАЦИЯ — пути к файлам настроек
+//  КОНФИГУРАЦИЯ
 // ═══════════════════════════════════════════════════════════════════════
 
 fn config_dir() -> PathBuf {
@@ -120,7 +123,6 @@ fn save_json<T: Serialize>(path: &PathBuf, data: &T) {
 //  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ═══════════════════════════════════════════════════════════════════════
 
-/// Определяет, URL это или поисковый запрос
 fn resolve_input(text: &str) -> String {
     let text = text.trim();
     if text.is_empty() {
@@ -147,11 +149,72 @@ fn resolve_input(text: &str) -> String {
     }
 }
 
+/// Синхронизирует позицию content окна с main окном
+fn sync_content_position(app: &AppHandle) {
+    if SYNCING.load(Ordering::SeqCst) {
+        return;
+    }
+    SYNCING.store(true, Ordering::SeqCst);
+
+    if let Some(main) = app.get_webview_window("main") {
+        if let Some(content) = app.get_webview_window("content") {
+            if let (Ok(pos), Ok(m_size), Ok(c_size)) =
+                (main.outer_position(), main.outer_size(), content.outer_size())
+            {
+                let _ = content.set_position(LogicalPosition::new(
+                    pos.x as f64,
+                    (pos.y + m_size.height as i32) as f64,
+                ));
+                // Ширина content = ширина main, высота не меняется
+                let _ = content.set_size(LogicalSize::new(
+                    m_size.width as f64,
+                    c_size.height as f64,
+                ));
+            }
+        }
+    }
+
+    SYNCING.store(false, Ordering::SeqCst);
+}
+
+/// Синхронизирует позицию main окна с content окном (при resize content)
+fn sync_main_position(app: &AppHandle) {
+    if SYNCING.load(Ordering::SeqCst) {
+        return;
+    }
+    SYNCING.store(true, Ordering::SeqCst);
+
+    if let Some(main) = app.get_webview_window("main") {
+        if let Some(content) = app.get_webview_window("content") {
+            if let (Ok(c_pos), Ok(c_size), Ok(m_size)) =
+                (content.outer_position(), content.outer_size(), main.outer_size())
+            {
+                // Main остаётся сверху, на той же X позиции
+                // Content сдвигается вниз на высоту main
+                let _ = main.set_position(LogicalPosition::new(
+                    c_pos.x as f64,
+                    c_pos.y as f64,
+                ));
+                let _ = content.set_position(LogicalPosition::new(
+                    c_pos.x as f64,
+                    (c_pos.y + m_size.height as i32) as f64,
+                ));
+                // Main ширина = content ширина
+                let _ = main.set_size(LogicalSize::new(
+                    c_size.width as f64,
+                    m_size.height as f64,
+                ));
+            }
+        }
+    }
+
+    SYNCING.store(false, Ordering::SeqCst);
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  TAURI-КОМАНДЫ — управление вкладками
 // ═══════════════════════════════════════════════════════════════════════
 
-/// Создать новую вкладку
 #[tauri::command]
 fn new_tab(state: State<TabsState>, url: Option<String>) -> Result<Tab, String> {
     let url = url.unwrap_or_else(|| HOMEPAGE.to_string());
@@ -179,7 +242,6 @@ fn new_tab(state: State<TabsState>, url: Option<String>) -> Result<Tab, String> 
     Ok(tab)
 }
 
-/// Закрыть вкладку по индексу
 #[tauri::command]
 fn close_tab(state: State<TabsState>, idx: usize) -> Result<bool, String> {
     let mut tabs = state.tabs.lock().unwrap();
@@ -196,7 +258,6 @@ fn close_tab(state: State<TabsState>, idx: usize) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Переключиться на вкладку по индексу
 #[tauri::command]
 fn switch_tab(state: State<TabsState>, idx: usize) -> Result<Option<Tab>, String> {
     let tabs = state.tabs.lock().unwrap();
@@ -208,7 +269,6 @@ fn switch_tab(state: State<TabsState>, idx: usize) -> Result<Option<Tab>, String
     Ok(Some(tabs[idx].clone()))
 }
 
-/// Получить список всех вкладок и индекс текущей
 #[tauri::command]
 fn get_tabs(state: State<TabsState>) -> Result<(Vec<Tab>, usize), String> {
     let tabs = state.tabs.lock().unwrap().clone();
@@ -216,7 +276,6 @@ fn get_tabs(state: State<TabsState>) -> Result<(Vec<Tab>, usize), String> {
     Ok((tabs, current))
 }
 
-/// Навигация по URL
 #[tauri::command]
 fn navigate(state: State<TabsState>, url: String) -> Result<Option<Tab>, String> {
     let resolved = resolve_input(&url);
@@ -227,7 +286,6 @@ fn navigate(state: State<TabsState>, url: String) -> Result<Option<Tab>, String>
     }
     let tab = &mut tabs[current];
 
-    // Сохраняем текущий URL в историю вкладки
     if !tab.url.is_empty() && tab.url != HOMEPAGE {
         if tab.history_idx < (tab.history.len() as i32 - 1) {
             tab.history.truncate((tab.history_idx + 1) as usize);
@@ -241,7 +299,6 @@ fn navigate(state: State<TabsState>, url: String) -> Result<Option<Tab>, String>
     Ok(Some(tab.clone()))
 }
 
-/// Назад
 #[tauri::command]
 fn go_back(state: State<TabsState>) -> Result<Option<Tab>, String> {
     let mut tabs = state.tabs.lock().unwrap();
@@ -259,7 +316,6 @@ fn go_back(state: State<TabsState>) -> Result<Option<Tab>, String> {
     Ok(None)
 }
 
-/// Вперёд
 #[tauri::command]
 fn go_forward(state: State<TabsState>) -> Result<Option<Tab>, String> {
     let mut tabs = state.tabs.lock().unwrap();
@@ -277,12 +333,11 @@ fn go_forward(state: State<TabsState>) -> Result<Option<Tab>, String> {
     Ok(None)
 }
 
-/// Домой
 #[tauri::command]
 fn go_home(state: State<TabsState>) -> Result<Option<Tab>, String> {
     navigate(state, HOMEPAGE.to_string())
 }
-/// Обновить заголовок вкладки (вызывается из JS при загрузке страницы)
+
 #[tauri::command]
 fn update_tab_title(state: State<TabsState>, title: String) -> Result<(), String> {
     let mut tabs = state.tabs.lock().unwrap();
@@ -293,13 +348,86 @@ fn update_tab_title(state: State<TabsState>, title: String) -> Result<(), String
     Ok(())
 }
 
-/// Обновить URL вкладки (вызывается из JS при навигации внутри страницы)
 #[tauri::command]
 fn update_tab_url(state: State<TabsState>, url: String) -> Result<(), String> {
     let mut tabs = state.tabs.lock().unwrap();
     let current = *state.current.lock().unwrap();
     if current < tabs.len() {
-        tabs[current].url = url.clone();
+        tabs[current].url = url;
+    }
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  TAURI-КОМАНДЫ — контент окно (нативный WebView)
+// ═══════════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+fn open_content(app: AppHandle, url: String) -> Result<(), String> {
+    let main = app.get_webview_window("main").ok_or("no main window")?;
+    let pos = main.outer_position().map_err(|e| e.to_string())?;
+    let size = main.outer_size().map_err(|e| e.to_string())?;
+
+    let x = pos.x as f64;
+    let y = (pos.y + size.height as i32) as f64;
+    let width = size.width as f64;
+    let height = DEFAULT_CONTENT_HEIGHT;
+
+    let parsed_url: tauri::Url = url.parse().map_err(|e: url::ParseError| e.to_string())?;
+
+    if let Some(content) = app.get_webview_window("content") {
+        // Окно уже существует — навигируем
+        content.navigate(parsed_url).map_err(|e| e.to_string())?;
+        content.set_position(LogicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+        content.set_size(LogicalSize::new(width, height)).map_err(|e| e.to_string())?;
+        content.show().map_err(|e| e.to_string())?;
+        content.set_focus().map_err(|e| e.to_string())?;
+    } else {
+        // Создаём новое окно контента
+        let content = tauri::WebviewWindow::builder(
+            &app,
+            "content",
+            tauri::WebviewUrl::External(parsed_url),
+        )
+        .title("Sierra")
+        .position(x, y)
+        .inner_size(width, height)
+        .decorations(false)
+        .visible(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+        // При закрытии content — закрываем main
+        let app_handle = app.clone();
+        content.on_window_event(move |event| {
+            if let WindowEvent::CloseRequested { .. } = event {
+                if let Some(main) = app_handle.get_webview_window("main") {
+                    let _ = main.close();
+                }
+            }
+            if let WindowEvent::Moved(_) = event {
+                sync_main_position(&app_handle);
+            }
+            if let WindowEvent::Resized(_) = event {
+                sync_main_position(&app_handle);
+            }
+        });
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn hide_content(app: AppHandle) -> Result<(), String> {
+    if let Some(content) = app.get_webview_window("content") {
+        content.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn focus_main(app: AppHandle) -> Result<(), String> {
+    if let Some(main) = app.get_webview_window("main") {
+        main.set_focus().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -319,11 +447,7 @@ fn is_bookmarked(state: State<BookmarksState>, url: String) -> Result<bool, Stri
 }
 
 #[tauri::command]
-fn toggle_bookmark(
-    state: State<BookmarksState>,
-    url: String,
-    title: String,
-) -> Result<bool, String> {
+fn toggle_bookmark(state: State<BookmarksState>, url: String, title: String) -> Result<bool, String> {
     let mut bookmarks = state.bookmarks.lock().unwrap();
     if let Some(idx) = bookmarks.iter().position(|b| b.url == url) {
         bookmarks.remove(idx);
@@ -331,8 +455,7 @@ fn toggle_bookmark(
         Ok(false)
     } else {
         bookmarks.push(Bookmark {
-            url,
-            title,
+            url, title,
             added: Utc::now().to_rfc3339(),
         });
         save_json(&bookmarks_path(), &*bookmarks);
@@ -361,8 +484,7 @@ fn add_to_history(state: State<HistoryState>, url: String, title: String) -> Res
         }
     }
     history.push(HistoryEntry {
-        url,
-        title,
+        url, title,
         time: Utc::now().to_rfc3339(),
     });
     if history.len() > MAX_HISTORY {
@@ -405,15 +527,9 @@ fn toggle_theme(state: State<SettingsState>) -> Result<String, String> {
 fn main() {
     tauri::Builder::default()
         .manage(TabsState::default())
-        .manage(BookmarksState {
-            bookmarks: Mutex::new(load_json(&bookmarks_path())),
-        })
-        .manage(HistoryState {
-            history: Mutex::new(load_json(&history_path())),
-        })
-        .manage(SettingsState {
-            settings: Mutex::new(load_json(&settings_path())),
-        })
+        .manage(BookmarksState { bookmarks: Mutex::new(load_json(&bookmarks_path())) })
+        .manage(HistoryState { history: Mutex::new(load_json(&history_path())) })
+        .manage(SettingsState { settings: Mutex::new(load_json(&settings_path())) })
         .invoke_handler(tauri::generate_handler![
             new_tab,
             close_tab,
@@ -425,6 +541,9 @@ fn main() {
             go_home,
             update_tab_title,
             update_tab_url,
+            open_content,
+            hide_content,
+            focus_main,
             get_bookmarks,
             is_bookmarked,
             toggle_bookmark,
@@ -434,6 +553,31 @@ fn main() {
             get_theme,
             toggle_theme,
         ])
+        .setup(|app| {
+            let main = app.get_webview_window("main").unwrap();
+            let app_handle = app.handle().clone();
+
+            // Синхронизация: при движении/resize main → content следует
+            main.on_window_event(move |event| {
+                let app = app_handle.clone();
+                match event {
+                    WindowEvent::Moved(_) => {
+                        sync_content_position(&app);
+                    }
+                    WindowEvent::Resized(_) => {
+                        sync_content_position(&app);
+                    }
+                    WindowEvent::CloseRequested { .. } => {
+                        if let Some(content) = app.get_webview_window("content") {
+                            let _ = content.close();
+                        }
+                    }
+                    _ => {}
+                }
+            });
+
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("Ошибка запуска Sierra");
 }

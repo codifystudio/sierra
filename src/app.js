@@ -1,35 +1,62 @@
 // Sierra Browser — JavaScript логика
+// Главное: ждём пока Tauri будет готов, потом инициализируем
 
-const { invoke } = window.__TAURI__.tauri;
+let invoke = null;
+let isReady = false;
 
-// ═══════════════════════════════════════════════════════════════════════
-//  STATE
-// ═══════════════════════════════════════════════════════════════════════
-
+// State
 let tabs = [];
 let current = 0;
 let theme = 'dark';
 let bookmarks = [];
 
-// Элементы DOM
-const tabsContainer = document.getElementById('tabsContainer');
-const addressBar = document.getElementById('addressBar');
-const startPage = document.getElementById('startPage');
-const startSearch = document.getElementById('startSearch');
-const webview = document.getElementById('webview');
-const progress = document.getElementById('progress');
-const progressFill = document.getElementById('progressFill');
-const statusText = document.getElementById('statusText');
-const menuDropdown = document.getElementById('menuDropdown');
-const btnBookmark = document.getElementById('btnBookmark');
-const btnBack = document.getElementById('btnBack');
-const btnForward = document.getElementById('btnForward');
+// DOM
+let tabsContainer, addressBar, startPage, startSearch;
+let progress, progressFill, statusText, menuDropdown;
+let btnBookmark, btnBack, btnForward;
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ОЖИДАНИЕ TAURI
+// ═══════════════════════════════════════════════════════════════════════
+
+function waitForTauri() {
+    return new Promise((resolve) => {
+        const check = () => {
+            if (window.__TAURI__ && (window.__TAURI__.invoke || (window.__TAURI__.core && window.__TAURI__.core.invoke))) {
+                invoke = window.__TAURI__.invoke || window.__TAURI__.core.invoke;
+                resolve();
+            } else {
+                setTimeout(check, 30);
+            }
+        };
+        check();
+    });
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════════════════════
 
 async function init() {
+    // Получаем DOM элементы
+    tabsContainer = document.getElementById('tabsContainer');
+    addressBar = document.getElementById('addressBar');
+    startPage = document.getElementById('startPage');
+    startSearch = document.getElementById('startSearch');
+    progress = document.getElementById('progress');
+    progressFill = document.getElementById('progressFill');
+    statusText = document.getElementById('statusText');
+    menuDropdown = document.getElementById('menuDropdown');
+    btnBookmark = document.getElementById('btnBookmark');
+    btnBack = document.getElementById('btnBack');
+    btnForward = document.getElementById('btnForward');
+
+    // Ждём Tauri
+    await waitForTauri();
+    isReady = true;
+    console.log('Tauri bridge ready');
+    statusText.textContent = 'Готово';
+
     // Загружаем тему
     try {
         theme = await invoke('get_theme');
@@ -37,12 +64,14 @@ async function init() {
     } catch (e) {
         console.error('get_theme failed:', e);
     }
+
     // Загружаем закладки
     try {
         bookmarks = await invoke('get_bookmarks');
     } catch (e) {
         console.error('get_bookmarks failed:', e);
     }
+
     // Создаём стартовую вкладку
     await newTab();
 }
@@ -52,18 +81,21 @@ async function init() {
 // ═══════════════════════════════════════════════════════════════════════
 
 async function newTab() {
+    if (!isReady) { console.warn('Tauri not ready yet'); return; }
     try {
-        const tab = await invoke('new_tab', { url: null });
+        await invoke('new_tab', { url: null });
         await refreshTabs();
         await showStartPage();
         addressBar.value = '';
         startSearch.focus();
     } catch (e) {
         console.error('newTab error:', e);
+        statusText.textContent = 'Ошибка: ' + e;
     }
 }
 
 async function switchTab(idx) {
+    if (!isReady) return;
     try {
         const tab = await invoke('switch_tab', { idx });
         if (tab) {
@@ -77,13 +109,13 @@ async function switchTab(idx) {
 
 async function closeTab(event, idx) {
     if (event) event.stopPropagation();
+    if (!isReady) return;
     try {
         const ok = await invoke('close_tab', { idx });
         if (ok) {
             await refreshTabs();
             const [t, c] = await invoke('get_tabs');
             if (t.length === 0) {
-                // Последняя вкладка закрыта — создадим новую
                 await newTab();
             } else {
                 await loadTabContent(t[c]);
@@ -100,33 +132,36 @@ async function refreshTabs() {
         tabs = t;
         current = c;
         renderTabs();
+        updateNavButtons();
     } catch (e) {
         console.error('refreshTabs error:', e);
     }
 }
 
 function renderTabs() {
+    if (!tabsContainer) return;
     tabsContainer.innerHTML = '';
     for (let i = 0; i < tabs.length; i++) {
         const tab = tabs[i];
         const isActive = i === current;
         const el = document.createElement('div');
-        el.className = `tab ${isActive ? 'active' : ''}`;
+        el.className = 'tab' + (isActive ? ' active' : '');
         el.onclick = () => switchTab(i);
         const title = tab.title || 'Без названия';
         const truncated = title.length > 28 ? title.substring(0, 28) + '…' : title;
-        el.innerHTML = `<span class="tab-title">${escapeHtml(truncated)}</span><span class="tab-close" onclick="closeTab(event, ${i})">×</span>`;
+        const safeTitle = escapeHtml(truncated);
+        el.innerHTML = `<span class="tab-title">${safeTitle}</span><span class="tab-close" onclick="event.stopPropagation(); closeTab(null, ${i})">×</span>`;
         tabsContainer.appendChild(el);
     }
 }
 
 function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]);
+    return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]);
 }
 
 async function loadTabContent(tab) {
     if (!tab) return;
-    if (tab.url === 'https://duckduckgo.com' || tab.url === '' || tab.url === HOMEPAGE_PAGE()) {
+    if (tab.url === 'https://duckduckgo.com' || tab.url === '' || tab.url === 'https://duckduckgo.com/') {
         await showStartPage();
         addressBar.value = '';
     } else {
@@ -134,53 +169,51 @@ async function loadTabContent(tab) {
         addressBar.value = tab.url;
     }
     updateBookmarkButton();
-    updateNavButtons();
-}
-
-function HOMEPAGE_PAGE() {
-    return 'https://duckduckgo.com';
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  КОНТЕНТ — переключение между start page и webview
+//  КОНТЕНТ — переключение между start page и нативным WebView окном
 // ═══════════════════════════════════════════════════════════════════════
 
 async function showStartPage() {
-    startPage.style.display = 'flex';
-    webview.style.display = 'none';
-    progress.style.display = 'none';
+    if (startPage) startPage.style.display = 'flex';
+    if (progress) progress.style.display = 'none';
     statusText.textContent = 'Готово';
-    startSearch.focus();
+    // Скрываем окно контента
+    try {
+        await invoke('hide_content');
+    } catch (e) {
+        console.error('hide_content:', e);
+    }
+    if (startSearch) startSearch.focus();
 }
 
 async function showWebview(url) {
-    startPage.style.display = 'none';
-    webview.style.display = 'block';
-    progress.style.display = 'block';
-    progressFill.style.width = '30%';
+    if (startPage) startPage.style.display = 'none';
+    if (progress) progress.style.display = 'block';
+    if (progressFill) progressFill.style.width = '30%';
 
-    // Загружаем URL в iframe
-    webview.src = url;
+    statusText.textContent = 'Загрузка: ' + url;
 
-    // Прогресс-симуляция (так как iframe sandbox ограничивает события)
-    setTimeout(() => { progressFill.style.width = '60%'; }, 200);
-    setTimeout(() => {
-        progressFill.style.width = '100%';
-        setTimeout(() => { progress.style.display = 'none'; }, 300);
-    }, 800);
-
-    statusText.textContent = url;
-
-    // Получаем title (это работает в большинстве случаев)
+    // Открываем URL в нативном Tauri WebviewWindow
     try {
-        // Из-за политики same-origin мы не можем напрямую прочитать title
-        // Но можем использовать title по умолчанию
+        await invoke('open_content', { url });
+        // Прогресс-симуляция
+        setTimeout(() => { if (progressFill) progressFill.style.width = '70%'; }, 200);
+        setTimeout(() => {
+            if (progressFill) progressFill.style.width = '100%';
+            setTimeout(() => { if (progress) progress.style.display = 'none'; }, 300);
+        }, 800);
+
+        // Обновляем title (используем URL как заголовок, так как Tauri webview
+        // не даёт напрямую получить title из другого окна)
         const title = url.replace(/^https?:\/\//, '').split('/')[0];
         await invoke('update_tab_title', { title });
         await invoke('add_to_history', { url, title });
         await refreshTabs();
     } catch (e) {
-        console.error('update_tab_title error:', e);
+        console.error('open_content error:', e);
+        statusText.textContent = 'Ошибка загрузки: ' + e;
     }
 }
 
@@ -189,7 +222,7 @@ async function showWebview(url) {
 // ═══════════════════════════════════════════════════════════════════════
 
 async function navigate(url) {
-    if (!url || !url.trim()) return;
+    if (!url || !url.trim() || !isReady) return;
     try {
         const tab = await invoke('navigate', { url });
         if (tab) {
@@ -200,6 +233,7 @@ async function navigate(url) {
         }
     } catch (e) {
         console.error('navigate error:', e);
+        statusText.textContent = 'Ошибка: ' + e;
     }
 }
 
@@ -225,13 +259,13 @@ function onAddressFocus() {
     addressBar.select();
 }
 function onAddressBlur() {
-    // Если ничего не ввели — возвращаем URL
     if (!addressBar.value && tabs[current]) {
         addressBar.value = tabs[current].url;
     }
 }
 
 async function goBack() {
+    if (!isReady) return;
     try {
         const tab = await invoke('go_back');
         if (tab) {
@@ -243,6 +277,7 @@ async function goBack() {
 }
 
 async function goForward() {
+    if (!isReady) return;
     try {
         const tab = await invoke('go_forward');
         if (tab) {
@@ -254,11 +289,12 @@ async function goForward() {
 }
 
 async function refresh() {
-    if (webview.style.display !== 'none' && webview.src) {
-        // Перезагружаем iframe
-        const src = webview.src;
-        webview.src = 'about:blank';
-        setTimeout(() => { webview.src = src; }, 50);
+    if (!isReady) return;
+    if (tabs[current] && tabs[current].url && tabs[current].url !== 'https://duckduckgo.com') {
+        // Перезагружаем, открывая URL заново
+        await showWebview(tabs[current].url);
+    } else {
+        await showStartPage();
     }
 }
 
@@ -271,7 +307,7 @@ async function goHome() {
 // ═══════════════════════════════════════════════════════════════════════
 
 async function toggleBookmark() {
-    if (!tabs[current]) return;
+    if (!isReady || !tabs[current]) return;
     const url = tabs[current].url;
     if (!url || url === 'https://duckduckgo.com') return;
     try {
@@ -286,7 +322,7 @@ async function toggleBookmark() {
 }
 
 function updateBookmarkButton() {
-    if (!tabs[current]) return;
+    if (!btnBookmark || !tabs[current]) return;
     const url = tabs[current].url;
     const isBookmarked = bookmarks.some(b => b.url === url);
     if (isBookmarked) {
@@ -297,86 +333,78 @@ function updateBookmarkButton() {
 }
 
 async function showBookmarks() {
+    if (!isReady) return;
     try {
         bookmarks = await invoke('get_bookmarks');
         if (bookmarks.length === 0) {
             statusText.textContent = 'Закладок нет';
             return;
         }
-        // Открываем новую вкладку со списком закладок
-        await newTab();
-        const html = `<html><head><title>Закладки</title><style>
-            body{font-family:system-ui;padding:40px;background:#fff;color:#000}
-            h1{margin-bottom:20px;color:#fc3f1d}
-            a{color:#0066cc;text-decoration:none;display:block;padding:8px 0;border-bottom:1px solid #eee}
-            a:hover{color:#fc3f1d}
-        </style></head><body><h1>Закладки</h1>${bookmarks.map(b =>
-            `<a href="${b.url}"><strong>${escapeHtml(b.title)}</strong><br><small>${escapeHtml(b.url)}</small></a>`
-        ).join('')}</body></html>`;
-        showWebviewWithHtml(html);
+        // Открываем HTML страницу с закладками в окне контента
+        const html = buildBookmarksHtml();
+        await invoke('open_content', { url: 'data:text/html;charset=utf-8,' + encodeURIComponent(html) });
+        hideMenu();
     } catch (e) {
         console.error('showBookmarks:', e);
     }
-    hideMenu();
+}
+
+function buildBookmarksHtml() {
+    const items = bookmarks.map(b =>
+        `<li><a href="${escapeHtml(b.url)}"><strong>${escapeHtml(b.title)}</strong><br><small>${escapeHtml(b.url)}</small></a></li>`
+    ).join('');
+    return `<html><head><title>Закладки</title><style>
+        body{font-family:system-ui;padding:40px;background:#fff;color:#000;margin:0}
+        h1{margin-bottom:20px;color:#fc3f1d}
+        ul{list-style:none;padding:0}
+        li{margin:0}
+        a{color:#0066cc;text-decoration:none;display:block;padding:12px 0;border-bottom:1px solid #eee}
+        a:hover{color:#fc3f1d;background:#fafafa}
+        small{color:#666}
+    </style></head><body><h1>Закладки</h1><ul>${items}</ul></body></html>`;
 }
 
 async function showHistory() {
+    if (!isReady) return;
     try {
         const history = await invoke('get_history');
         if (history.length === 0) {
             statusText.textContent = 'История пуста';
             return;
         }
-        await newTab();
+        const items = history.slice(-100).reverse().map(h =>
+            `<li><a href="${escapeHtml(h.url)}"><strong>${escapeHtml(h.title)}</strong><br><small>${escapeHtml(h.url)} · ${h.time.substring(0, 19)}</small></a></li>`
+        ).join('');
         const html = `<html><head><title>История</title><style>
-            body{font-family:system-ui;padding:40px;background:#fff;color:#000}
+            body{font-family:system-ui;padding:40px;background:#fff;color:#000;margin:0}
             h1{margin-bottom:20px;color:#fc3f1d}
-            a{color:#0066cc;text-decoration:none;display:block;padding:8px 0;border-bottom:1px solid #eee}
-            a:hover{color:#fc3f1d}
+            ul{list-style:none;padding:0}
+            li{margin:0}
+            a{color:#0066cc;text-decoration:none;display:block;padding:12px 0;border-bottom:1px solid #eee}
+            a:hover{color:#fc3f1d;background:#fafafa}
             small{color:#666}
-        </style></head><body><h1>История</h1>${history.slice(-100).reverse().map(h =>
-            `<a href="${h.url}"><strong>${escapeHtml(h.title)}</strong><br><small>${escapeHtml(h.url)} · ${h.time.substring(0, 19)}</small></a>`
-        ).join('')}</body></html>`;
-        showWebviewWithHtml(html);
+        </style></head><body><h1>История</h1><ul>${items}</ul></body></html>`;
+        await invoke('open_content', { url: 'data:text/html;charset=utf-8,' + encodeURIComponent(html) });
+        hideMenu();
     } catch (e) {
         console.error('showHistory:', e);
     }
-    hideMenu();
-}
-
-async function showWebviewWithHtml(html) {
-    startPage.style.display = 'none';
-    webview.style.display = 'block';
-    webview.srcdoc = html;
-    progress.style.display = 'none';
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  МАСШТАБ
+//  МАСШТАБ (для стартовой страницы)
 // ═══════════════════════════════════════════════════════════════════════
 
-let zoom = 1;
-async function zoomIn() {
-    zoom = Math.min(3, zoom + 0.1);
-    webview.style.zoom = zoom;
-    hideMenu();
-}
-async function zoomOut() {
-    zoom = Math.max(0.3, zoom - 0.1);
-    webview.style.zoom = zoom;
-    hideMenu();
-}
-async function zoomReset() {
-    zoom = 1;
-    webview.style.zoom = 1;
-    hideMenu();
-}
+async function zoomIn() { hideMenu(); }
+async function zoomOut() { hideMenu(); }
+async function zoomReset() { hideMenu(); }
 
 // ═══════════════════════════════════════════════════════════════════════
 //  ТЕМА
 // ═══════════════════════════════════════════════════════════════════════
 
 async function toggleTheme() {
+    if (!isReady) return;
     try {
         theme = await invoke('toggle_theme');
         document.body.className = theme;
@@ -385,6 +413,7 @@ async function toggleTheme() {
 }
 
 async function clearHistory() {
+    if (!isReady) return;
     try {
         await invoke('clear_history');
         statusText.textContent = 'История очищена';
@@ -398,11 +427,11 @@ async function clearHistory() {
 
 function toggleMenu(event) {
     if (event) event.stopPropagation();
-    menuDropdown.classList.toggle('show');
+    if (menuDropdown) menuDropdown.classList.toggle('show');
 }
 
 function hideMenu() {
-    menuDropdown.classList.remove('show');
+    if (menuDropdown) menuDropdown.classList.remove('show');
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -410,7 +439,7 @@ function hideMenu() {
 // ═══════════════════════════════════════════════════════════════════════
 
 function updateNavButtons() {
-    if (!tabs[current]) return;
+    if (!btnBack || !btnForward || !tabs[current]) return;
     const tab = tabs[current];
     btnBack.disabled = tab.history_idx <= 0;
     btnForward.disabled = tab.history_idx >= tab.history.length - 1;
@@ -424,7 +453,7 @@ document.addEventListener('keydown', (e) => {
     const ctrl = e.ctrlKey || e.metaKey;
     if (ctrl && e.key === 't') { e.preventDefault(); newTab(); }
     else if (ctrl && e.key === 'w') { e.preventDefault(); closeTab(null, current); }
-    else if (ctrl && e.key === 'l') { e.preventDefault(); addressBar.focus(); addressBar.select(); }
+    else if (ctrl && e.key === 'l') { e.preventDefault(); if (addressBar) { addressBar.focus(); addressBar.select(); } }
     else if (ctrl && e.key === 'd') { e.preventDefault(); toggleBookmark(); }
     else if (ctrl && e.key === 'h') { e.preventDefault(); showHistory(); }
     else if (ctrl && e.shiftKey && (e.key === 'T' || e.key === 't')) { e.preventDefault(); toggleTheme(); }
@@ -440,10 +469,43 @@ document.addEventListener('keydown', (e) => {
 
 // Закрытие меню при клике вне его
 document.addEventListener('click', (e) => {
-    if (!e.target.closest('#menuDropdown') && !e.target.closest('#btnMenu')) {
+    if (menuDropdown && !e.target.closest('#menuDropdown') && !e.target.closest('#btnMenu')) {
         hideMenu();
     }
 });
 
-// Запуск
-init();
+// ═══════════════════════════════════════════════════════════════════════
+//  ГЛОБАЛЬНЫЕ ФУНКЦИИ (для onclick в HTML)
+// ═══════════════════════════════════════════════════════════════════════
+
+window.newTab = newTab;
+window.switchTab = switchTab;
+window.closeTab = closeTab;
+window.navigate = navigate;
+window.goBack = goBack;
+window.goForward = goForward;
+window.refresh = refresh;
+window.goHome = goHome;
+window.toggleBookmark = toggleBookmark;
+window.toggleMenu = toggleMenu;
+window.showBookmarks = showBookmarks;
+window.showHistory = showHistory;
+window.zoomIn = zoomIn;
+window.zoomOut = zoomOut;
+window.zoomReset = zoomReset;
+window.toggleTheme = toggleTheme;
+window.clearHistory = clearHistory;
+window.onAddressKey = onAddressKey;
+window.onStartSearchKey = onStartSearchKey;
+window.onAddressFocus = onAddressFocus;
+window.onAddressBlur = onAddressBlur;
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ЗАПУСК
+// ═══════════════════════════════════════════════════════════════════════
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}

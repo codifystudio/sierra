@@ -8,17 +8,13 @@
 </head>
 <body class="dark">
 
-<!-- ═══════════════════════════════════════════════════════════════════
-     TAB STRIP (сверху — как в Chrome)
-═══════════════════════════════════════════════════════════════════ -->
+<!-- ═══ TAB STRIP (сверху — как в Chrome) ═══ -->
 <div class="tab-strip" id="tabStrip">
   <div class="tabs" id="tabsContainer"></div>
   <button class="new-tab-btn" onclick="newTab()" title="Новая вкладка (Ctrl+T)">+</button>
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════════════
-     TOOLBAR (под вкладками — навигация + адресная строка)
-═══════════════════════════════════════════════════════════════════ -->
+<!-- ═══ TOOLBAR (под вкладками — навигация + адресная строка) ═══ -->
 <div class="toolbar">
   <button class="nav-btn" id="btnBack" onclick="goBack()" title="Назад (Alt+←)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
@@ -42,14 +38,12 @@
   <button class="nav-btn" id="btnBookmark" onclick="toggleBookmark()" title="Добавить в закладки (Ctrl+D)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
   </button>
-  <button class="nav-btn menu-btn" id="btnMenu" onclick="toggleMenu($event)" title="Меню">
+  <button class="nav-btn menu-btn" id="btnMenu" onclick="toggleMenu(event)" title="Меню">
     <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
   </button>
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════════════
-     MENU DROPDOWN
-═══════════════════════════════════════════════════════════════════ -->
+<!-- ═══ MENU DROPDOWN ═══ -->
 <div class="menu-dropdown" id="menuDropdown">
   <div class="menu-item" onclick="newTab()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -64,19 +58,6 @@
     <span>История</span><span class="menu-shortcut">Ctrl+H</span>
   </div>
   <div class="menu-separator"></div>
-  <div class="menu-item" onclick="zoomIn()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-    <span>Увеличить</span><span class="menu-shortcut">Ctrl++</span>
-  </div>
-  <div class="menu-item" onclick="zoomOut()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-    <span>Уменьшить</span><span class="menu-shortcut">Ctrl+-</span>
-  </div>
-  <div class="menu-item" onclick="zoomReset()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <span>Сбросить масштаб</span><span class="menu-shortcut">Ctrl+0</span>
-  </div>
-  <div class="menu-separator"></div>
   <div class="menu-item" onclick="toggleTheme()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
     <span>Сменить тему</span><span class="menu-shortcut">Ctrl+Shift+T</span>
@@ -87,68 +68,55 @@
   </div>
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════════════
-     CONTENT AREA — переключается между start page и webview
-═══════════════════════════════════════════════════════════════════ -->
-<div class="content" id="content">
-
-  <!-- START PAGE (видна на новых вкладках) -->
-  <div class="start-page" id="startPage">
-    <div class="start-logo">Sierra</div>
-    <input type="text" class="start-search" id="startSearch"
-           placeholder="Поиск в DuckDuckGo или введите URL"
-           onkeydown="onStartSearchKey(event)">
-    <div class="start-shortcuts" id="startShortcuts">
-      <div class="shortcut" onclick="navigate('https://github.com')">
-        <div class="shortcut-icon" style="color:#fff;background:#24292e">G</div>
-        <div class="shortcut-name">GitHub</div>
-      </div>
-      <div class="shortcut" onclick="navigate('https://duckduckgo.com')">
-        <div class="shortcut-icon" style="color:#fff;background:#de5833">D</div>
-        <div class="shortcut-name">DuckDuckGo</div>
-      </div>
-      <div class="shortcut" onclick="navigate('https://youtube.com')">
-        <div class="shortcut-icon" style="color:#fff;background:#ff0000">Y</div>
-        <div class="shortcut-name">YouTube</div>
-      </div>
-      <div class="shortcut" onclick="navigate('https://wikipedia.org')">
-        <div class="shortcut-icon" style="color:#fff;background:#000">W</div>
-        <div class="shortcut-name">Wikipedia</div>
-      </div>
-      <div class="shortcut" onclick="navigate('https://news.ycombinator.com')">
-        <div class="shortcut-icon" style="color:#ff6600;background:#f6f6ef">H</div>
-        <div class="shortcut-name">Hacker News</div>
-      </div>
-      <div class="shortcut" onclick="navigate('https://reddit.com')">
-        <div class="shortcut-icon" style="color:#fff;background:#ff4500">R</div>
-        <div class="shortcut-name">Reddit</div>
-      </div>
-      <div class="shortcut" onclick="navigate('https://twitter.com')">
-        <div class="shortcut-icon" style="color:#fff;background:#1da1f2">X</div>
-        <div class="shortcut-name">X (Twitter)</div>
-      </div>
-      <div class="shortcut" onclick="navigate('https://stackoverflow.com')">
-        <div class="shortcut-icon" style="color:#fff;background:#f48024">S</div>
-        <div class="shortcut-name">Stack Overflow</div>
-      </div>
+<!-- ═══ START PAGE (показывается на новых вкладках) ═══ -->
+<div class="start-page" id="startPage">
+  <div class="start-logo">Sierra</div>
+  <input type="text" class="start-search" id="startSearch"
+         placeholder="Поиск в DuckDuckGo или введите URL"
+         onkeydown="onStartSearchKey(event)">
+  <div class="start-shortcuts" id="startShortcuts">
+    <div class="shortcut" onclick="navigate('https://github.com')">
+      <div class="shortcut-icon" style="color:#fff;background:#24292e">G</div>
+      <div class="shortcut-name">GitHub</div>
     </div>
-    <div class="hint">Подсказка: Ctrl+T — новая вкладка · Ctrl+L — адресная строка · Ctrl+W — закрыть</div>
+    <div class="shortcut" onclick="navigate('https://duckduckgo.com')">
+      <div class="shortcut-icon" style="color:#fff;background:#de5833">D</div>
+      <div class="shortcut-name">DuckDuckGo</div>
+    </div>
+    <div class="shortcut" onclick="navigate('https://youtube.com')">
+      <div class="shortcut-icon" style="color:#fff;background:#ff0000">Y</div>
+      <div class="shortcut-name">YouTube</div>
+    </div>
+    <div class="shortcut" onclick="navigate('https://wikipedia.org')">
+      <div class="shortcut-icon" style="color:#fff;background:#000">W</div>
+      <div class="shortcut-name">Wikipedia</div>
+    </div>
+    <div class="shortcut" onclick="navigate('https://news.ycombinator.com')">
+      <div class="shortcut-icon" style="color:#ff6600;background:#f6f6ef">H</div>
+      <div class="shortcut-name">Hacker News</div>
+    </div>
+    <div class="shortcut" onclick="navigate('https://reddit.com')">
+      <div class="shortcut-icon" style="color:#fff;background:#ff4500">R</div>
+      <div class="shortcut-name">Reddit</div>
+    </div>
+    <div class="shortcut" onclick="navigate('https://twitter.com')">
+      <div class="shortcut-icon" style="color:#fff;background:#1da1f2">X</div>
+      <div class="shortcut-name">X (Twitter)</div>
+    </div>
+    <div class="shortcut" onclick="navigate('https://stackoverflow.com')">
+      <div class="shortcut-icon" style="color:#fff;background:#f48024">S</div>
+      <div class="shortcut-name">Stack Overflow</div>
+    </div>
   </div>
+  <div class="hint">Ctrl+T — новая вкладка · Ctrl+L — адресная строка · Ctrl+W — закрыть</div>
+</div>
 
-  <!-- WEBVIEW (iframe, показывающий сайт) -->
-  <iframe class="webview" id="webview" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-presentation" style="display:none"></iframe>
-
-  <!-- PROGRESS BAR (внизу над контентом) -->
+<!-- ═══ STATUS BAR ═══ -->
+<div class="status-bar">
+  <span id="statusText">Загрузка…</span>
   <div class="progress" id="progress" style="display:none">
     <div class="progress-fill" id="progressFill"></div>
   </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════════
-     STATUS BAR
-═══════════════════════════════════════════════════════════════════ -->
-<div class="status-bar">
-  <span id="statusText">Готово</span>
 </div>
 
 <script src="app.js"></script>

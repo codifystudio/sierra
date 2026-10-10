@@ -1,4 +1,4 @@
-/* Sierra Browser — CSS интерфейс
+/* Sierra Browser — CSS интерфейс (chrome only)
    Гибрид: Яндекс (акценты) + Chrome (компоновка) + Safari (минимализм) */
 
 * {
@@ -31,45 +31,24 @@ body.dark {
 }
 body.dark .tab-strip { background: #2a2a2d; }
 body.dark .toolbar { background: #2a2a2d; border-bottom: 1px solid #3a3a3d; }
-body.dark .tab {
-    background: #3a3a3d;
-    color: #b0b0b5;
-}
-body.dark .tab.active {
-    background: #5b5b5e;
-    color: #ffffff;
-}
-body.dark .tab:hover:not(.active) {
-    background: #48484b;
-    color: #d4d4d8;
-}
+body.dark .tab { background: #3a3a3d; color: #b0b0b5; }
+body.dark .tab.active { background: #5b5b5e; color: #ffffff; }
+body.dark .tab:hover:not(.active) { background: #48484b; color: #d4d4d8; }
 body.dark .nav-btn { color: #d4d4d8; }
 body.dark .nav-btn:hover { background: #3a3a3d; }
 body.dark .nav-btn:active { background: var(--yandex-red); color: white; }
-body.dark .address-bar {
-    background: #3a3a3d;
-    color: #ffffff;
-    border: 1.5px solid transparent;
-}
+body.dark .address-bar { background: #3a3a3d; color: #ffffff; border: 1.5px solid transparent; }
 body.dark .address-bar:focus { border-color: var(--yandex-red); background: #4a4a4d; }
 body.dark .address-bar::placeholder { color: #8a8a8e; }
 body.dark .new-tab-btn { color: #d4d4d8; }
 body.dark .new-tab-btn:hover { background: #3a3a3d; }
-body.dark .menu-dropdown {
-    background: #2a2a2d;
-    border: 1px solid #3a3a3d;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-}
+body.dark .menu-dropdown { background: #2a2a2d; border: 1px solid #3a3a3d; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
 body.dark .menu-item:hover { background: var(--yandex-red); color: white; }
 body.dark .menu-item:hover svg { stroke: white; }
 body.dark .menu-separator { background: #3a3a3d; }
 body.dark .status-bar { background: #2a2a2d; color: #8a8a8e; border-top: 2px solid var(--yandex-red); }
 body.dark .btn-bookmark.active svg { fill: var(--yandex-yellow); stroke: var(--yandex-yellow); }
-body.dark .start-search {
-    background: #3a3a3d;
-    color: #ffffff;
-    border: 1.5px solid rgba(255, 255, 255, 0.05);
-}
+body.dark .start-search { background: #3a3a3d; color: #ffffff; border: 1.5px solid rgba(255, 255, 255, 0.05); }
 body.dark .start-search:focus { border-color: var(--yandex-red); }
 body.dark .start-page .hint { color: #6e6e72; }
 body.dark .shortcut { background: rgba(255, 255, 255, 0.04); }
@@ -84,45 +63,24 @@ body.light {
 }
 body.light .tab-strip { background: #e8e8ed; }
 body.light .toolbar { background: #e8e8ed; border-bottom: 1px solid #d8d8dd; }
-body.light .tab {
-    background: #d8d8dd;
-    color: #5a5a5e;
-}
-body.light .tab.active {
-    background: #ffffff;
-    color: #1c1c1e;
-}
-body.light .tab:hover:not(.active) {
-    background: #c8c8cd;
-    color: #3a3a3e;
-}
+body.light .tab { background: #d8d8dd; color: #5a5a5e; }
+body.light .tab.active { background: #ffffff; color: #1c1c1e; }
+body.light .tab:hover:not(.active) { background: #c8c8cd; color: #3a3a3e; }
 body.light .nav-btn { color: #5a5a5e; }
 body.light .nav-btn:hover { background: #d8d8dd; }
 body.light .nav-btn:active { background: var(--yandex-red); color: white; }
-body.light .address-bar {
-    background: #ffffff;
-    color: #1c1c1e;
-    border: 1px solid #d8d8dd;
-}
+body.light .address-bar { background: #ffffff; color: #1c1c1e; border: 1px solid #d8d8dd; }
 body.light .address-bar:focus { border-color: var(--yandex-red); }
 body.light .address-bar::placeholder { color: #8a8a8e; }
 body.light .new-tab-btn { color: #5a5a5e; }
 body.light .new-tab-btn:hover { background: #d8d8dd; }
-body.light .menu-dropdown {
-    background: #ffffff;
-    border: 1px solid #d8d8dd;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-}
+body.light .menu-dropdown { background: #ffffff; border: 1px solid #d8d8dd; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15); }
 body.light .menu-item:hover { background: var(--yandex-red); color: white; }
 body.light .menu-item:hover svg { stroke: white; }
 body.light .menu-separator { background: #e0e0e5; }
 body.light .status-bar { background: #e8e8ed; color: #5a5a5e; border-top: 2px solid var(--yandex-red); }
 body.light .btn-bookmark.active svg { fill: var(--yandex-yellow); stroke: var(--yandex-yellow); }
-body.light .start-search {
-    background: #ffffff;
-    color: #1c1c1e;
-    border: 1px solid #d8d8dd;
-}
+body.light .start-search { background: #ffffff; color: #1c1c1e; border: 1px solid #d8d8dd; }
 body.light .start-search:focus { border-color: var(--yandex-red); }
 body.light .start-page .hint { color: #8a8a8e; }
 body.light .shortcut { background: rgba(0, 0, 0, 0.04); }
@@ -301,31 +259,22 @@ body.light .menu-item svg { color: #5a5a5e; }
     font-size: 11px;
 }
 
-/* ═══ CONTENT ═══ */
-.content {
-    flex: 1;
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    background: inherit;
-}
-
+/* ═══ START PAGE ═══ */
 .start-page {
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 40px;
+    padding: 20px;
     overflow-y: auto;
 }
 
 .start-logo {
-    font-size: 64px;
+    font-size: 48px;
     font-weight: 200;
     letter-spacing: -3px;
-    margin-bottom: 30px;
+    margin-bottom: 20px;
     background: linear-gradient(135deg, var(--yandex-red), var(--yandex-yellow));
     -webkit-background-clip: text;
     background-clip: text;
@@ -335,41 +284,41 @@ body.light .menu-item svg { color: #5a5a5e; }
 .start-search {
     width: 100%;
     max-width: 580px;
-    height: 52px;
-    border-radius: 26px;
+    height: 48px;
+    border-radius: 24px;
     padding: 0 24px;
-    font-size: 16px;
+    font-size: 15px;
     outline: none;
     transition: all 0.15s;
 }
 
 .start-shortcuts {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-    gap: 14px;
-    margin-top: 36px;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 12px;
+    margin-top: 24px;
     width: 100%;
-    max-width: 720px;
+    max-width: 680px;
 }
 
 .shortcut {
-    padding: 16px 8px;
-    border-radius: 12px;
+    padding: 12px 8px;
+    border-radius: 10px;
     text-align: center;
     cursor: pointer;
-    font-size: 12px;
+    font-size: 11px;
     transition: background 0.15s;
 }
 
 .shortcut-icon {
-    width: 44px;
-    height: 44px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
-    margin: 0 auto 8px auto;
+    margin: 0 auto 6px auto;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 700;
 }
 
@@ -380,27 +329,20 @@ body.light .menu-item svg { color: #5a5a5e; }
 }
 
 .hint {
-    margin-top: 32px;
+    margin-top: 20px;
     font-size: 11px;
     text-align: center;
 }
 
-/* ═══ WEBVIEW (iframe) ═══ */
-.webview {
-    flex: 1;
-    width: 100%;
-    border: none;
-    background: #fff;
-}
-
 /* ═══ PROGRESS BAR ═══ */
 .progress {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    flex: 1;
     height: 3px;
     background: rgba(128, 128, 128, 0.1);
+    border-radius: 1px;
+    overflow: hidden;
+    max-width: 200px;
+    margin-left: 10px;
 }
 
 .progress-fill {

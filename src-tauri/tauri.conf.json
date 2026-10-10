@@ -12,9 +12,10 @@
       {
         "title": "Sierra",
         "width": 1200,
-        "height": 800,
+        "height": 140,
         "minWidth": 600,
-        "minHeight": 400,
+        "minHeight": 140,
+        "maxHeight": 140,
         "center": true,
         "decorations": true,
         "resizable": true,
