@@ -373,38 +373,55 @@ fn open_content(app: AppHandle, url: String) -> Result<(), String> {
     let width = size.width as f64;
     let height = DEFAULT_CONTENT_HEIGHT;
 
-    // Парсим URL — поддержка как https://, так и data:
-    let parsed_url: tauri::Url = match url.parse() {
-        Ok(u) => u,
-        Err(e) => return Err(format!("URL parse error: {} for url: {}", e, url)),
-    };
+    eprintln!("[Sierra] open_content called: url={}, pos=({},{}), size={}x{}", url, x, y, width, height);
 
     if let Some(content) = app.get_webview_window("content") {
         // Окно уже существует — навигируем
-        eprintln!("[Sierra] Navigating existing content to: {}", url);
-        content.navigate(parsed_url).map_err(|e| format!("navigate: {}", e))?;
+        eprintln!("[Sierra] Navigating existing content window to: {}", url);
+        let parsed: tauri::Url = url.parse().map_err(|e| format!("URL parse: {}", e))?;
+        content.navigate(parsed).map_err(|e| format!("navigate: {}", e))?;
         content.set_position(LogicalPosition::new(x, y)).map_err(|e| format!("pos: {}", e))?;
         content.set_size(LogicalSize::new(width, height)).map_err(|e| format!("size: {}", e))?;
         content.show().map_err(|e| format!("show: {}", e))?;
         content.set_focus().map_err(|e| format!("focus: {}", e))?;
+        eprintln!("[Sierra] Existing content navigation OK");
     } else {
-        // Создаём новое окно контента
-        eprintln!("[Sierra] Creating content window, url: {}", url);
+        // Создаём новое окно контента.
+        // Используем WebviewUrl::External для немедленной навигации на URL.
+        eprintln!("[Sierra] Creating new content window, url: {}", url);
+        let parsed: tauri::Url = url.parse().map_err(|e| format!("URL parse: {}", e))?;
         let content = tauri::WebviewWindow::builder(
             &app,
             "content",
-            tauri::WebviewUrl::External(parsed_url.clone()),
+            tauri::WebviewUrl::External(parsed.clone()),
         )
-        .title("Sierra")
+        .title("Sierra Content")
         .position(x, y)
         .inner_size(width, height)
         .decorations(false)
         .visible(true)
+        .additional_browser_args("--disable-features=msSmartScreen")
         .build()
         .map_err(|e| format!("create content window: {}", e))?;
 
-        // Дополнительно явно навигируем (на случай если External не сработал)
-        let _ = content.navigate(parsed_url);
+        eprintln!("[Sierra] Content window created with External URL");
+        // Дополнительно явно навигируем (на случай если WebView ещё не готов)
+        let _ = content.navigate(parsed.clone());
+
+        // Повторная попытка через 200мс (WebView может быть не готов сразу)
+        let content_clone = content.clone();
+        let url_clone = url.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let parsed2: tauri::Url = match url_clone.parse() {
+                Ok(u) => u,
+                Err(_) => return,
+            };
+            match content_clone.navigate(parsed2) {
+                Ok(_) => eprintln!("[Sierra] Retried navigate() OK after 200ms"),
+                Err(e) => eprintln!("[Sierra] Retried navigate() error: {}", e),
+            }
+        });
 
         // При закрытии content — закрываем main
         let app_handle = app.clone();
