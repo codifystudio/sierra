@@ -1,10 +1,41 @@
-// Sierra Browser — JavaScript логика
-// Главное: ждём пока Tauri будет готов, потом инициализируем
+// Sierra Browser — JavaScript логика v4.2.0
+// Главное: ВСЕ события через addEventListener, явный debug overlay
+
+// ═══════════════════════════════════════════════════════════════════════
+//  DEBUG — показывает ошибки прямо в UI
+// ═══════════════════════════════════════════════════════════════════════
+
+let debugOverlayEl = null;
+let debugLines = [];
+const MAX_DEBUG = 10;
+
+function showDebug(msg) {
+    console.log('[Sierra]', msg);
+    debugLines.push(msg);
+    if (debugLines.length > MAX_DEBUG) debugLines.shift();
+    if (debugOverlayEl) {
+        debugOverlayEl.style.display = 'block';
+        debugOverlayEl.innerHTML = debugLines.map(l => '› ' + l).join('<br>');
+    }
+}
+
+function showDebugError(msg, err) {
+    const text = msg + (err ? ': ' + (err.message || err) : '');
+    console.error('[Sierra ERROR]', text);
+    debugLines.push('⚠ ' + text);
+    if (debugLines.length > MAX_DEBUG) debugLines.shift();
+    if (debugOverlayEl) {
+        debugOverlayEl.style.display = 'block';
+        debugOverlayEl.innerHTML = debugLines.map(l => '› ' + l).join('<br>');
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════════════
 
 let invoke = null;
 let isReady = false;
-
-// State
 let tabs = [];
 let current = 0;
 let theme = 'dark';
@@ -13,20 +44,36 @@ let bookmarks = [];
 // DOM
 let tabsContainer, addressBar, startPage, startSearch;
 let progress, progressFill, statusText, menuDropdown;
-let btnBookmark, btnBack, btnForward;
+let btnBookmark, btnBack, btnForward, btnRefresh, btnHome, btnMenu, btnNewTab;
 
 // ═══════════════════════════════════════════════════════════════════════
-//  ОЖИДАНИЕ TAURI
+//  ОЖИДАНИЕ TAURI — поддерживает все возможные структуры
 // ═══════════════════════════════════════════════════════════════════════
 
-function waitForTauri() {
+function getInvoke() {
+    const t = window.__TAURI__;
+    if (!t) return null;
+    // Tauri 2.x: window.__TAURI__.core.invoke
+    if (t.core && typeof t.core.invoke === 'function') return t.core.invoke.bind(t.core);
+    // Tauri 1.x: window.__TAURI__.tauri.invoke
+    if (t.tauri && typeof t.tauri.invoke === 'function') return t.tauri.invoke.bind(t.tauri);
+    // Прямой invoke
+    if (typeof t.invoke === 'function') return t.invoke.bind(t);
+    return null;
+}
+
+function waitForTauri(maxMs = 10000) {
     return new Promise((resolve) => {
+        const start = Date.now();
         const check = () => {
-            if (window.__TAURI__ && (window.__TAURI__.invoke || (window.__TAURI__.core && window.__TAURI__.core.invoke))) {
-                invoke = window.__TAURI__.invoke || window.__TAURI__.core.invoke;
-                resolve();
+            const inv = getInvoke();
+            if (inv) {
+                resolve(inv);
+            } else if (Date.now() - start > maxMs) {
+                showDebugError('Tauri bridge не появился за ' + (maxMs/1000) + ' сек');
+                resolve(null);
             } else {
-                setTimeout(check, 30);
+                setTimeout(check, 50);
             }
         };
         check();
@@ -37,8 +84,7 @@ function waitForTauri() {
 //  INIT
 // ═══════════════════════════════════════════════════════════════════════
 
-async function init() {
-    // Получаем DOM элементы
+function bindDomElements() {
     tabsContainer = document.getElementById('tabsContainer');
     addressBar = document.getElementById('addressBar');
     startPage = document.getElementById('startPage');
@@ -50,30 +96,139 @@ async function init() {
     btnBookmark = document.getElementById('btnBookmark');
     btnBack = document.getElementById('btnBack');
     btnForward = document.getElementById('btnForward');
+    btnRefresh = document.getElementById('btnRefresh');
+    btnHome = document.getElementById('btnHome');
+    btnMenu = document.getElementById('btnMenu');
+    btnNewTab = document.getElementById('btnNewTab');
+
+    debugOverlayEl = document.getElementById('debugOverlay');
+}
+
+function attachEventListeners() {
+    showDebug('Attaching event listeners...');
+
+    // Кнопки навигации
+    if (btnBack) btnBack.addEventListener('click', () => { showDebug('Back clicked'); goBack(); });
+    if (btnForward) btnForward.addEventListener('click', () => { showDebug('Forward clicked'); goForward(); });
+    if (btnRefresh) btnRefresh.addEventListener('click', () => { showDebug('Refresh clicked'); refresh(); });
+    if (btnHome) btnHome.addEventListener('click', () => { showDebug('Home clicked'); goHome(); });
+    if (btnNewTab) btnNewTab.addEventListener('click', () => { showDebug('New tab clicked'); newTab(); });
+    if (btnBookmark) btnBookmark.addEventListener('click', () => { showDebug('Bookmark clicked'); toggleBookmark(); });
+    if (btnMenu) btnMenu.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (menuDropdown) menuDropdown.classList.toggle('show');
+    });
+
+    // Адресная строка
+    if (addressBar) {
+        addressBar.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const val = addressBar.value.trim();
+                if (val) {
+                    showDebug('Navigate: ' + val);
+                    navigate(val);
+                }
+            } else if (e.key === 'Escape') {
+                addressBar.blur();
+            }
+        });
+        addressBar.addEventListener('focus', () => addressBar.select());
+    }
+
+    // Поиск на start page
+    if (startSearch) {
+        startSearch.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const val = startSearch.value.trim();
+                if (val) {
+                    showDebug('Search: ' + val);
+                    navigate(val);
+                }
+            }
+        });
+    }
+
+    // Меню items
+    document.querySelectorAll('.menu-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const action = item.dataset.action;
+            showDebug('Menu action: ' + action);
+            if (action === 'new-tab') newTab();
+            else if (action === 'show-bookmarks') showBookmarks();
+            else if (action === 'show-history') showHistory();
+            else if (action === 'toggle-theme') toggleTheme();
+            else if (action === 'clear-history') clearHistory();
+            if (menuDropdown) menuDropdown.classList.remove('show');
+        });
+    });
+
+    // Shortcuts на start page
+    document.querySelectorAll('.shortcut').forEach(s => {
+        s.addEventListener('click', () => {
+            const url = s.dataset.url;
+            if (url) {
+                showDebug('Shortcut: ' + url);
+                navigate(url);
+            }
+        });
+    });
+
+    // Закрытие меню при клике вне
+    document.addEventListener('click', (e) => {
+        if (menuDropdown && !e.target.closest('#menuDropdown') && !e.target.closest('#btnMenu')) {
+            menuDropdown.classList.remove('show');
+        }
+    });
+
+    showDebug('Event listeners attached OK');
+}
+
+async function init() {
+    bindDomElements();
+    showDebug('Sierra init started');
+    showDebug('UA: ' + (navigator.userAgent || 'unknown').substring(0, 60));
+    showDebug('window.__TAURI__: ' + (window.__TAURI__ ? 'yes' : 'no'));
+
+    attachEventListeners();
+
+    if (statusText) statusText.textContent = 'Загрузка Tauri...';
 
     // Ждём Tauri
-    await waitForTauri();
+    invoke = await waitForTauri();
+    if (!invoke) {
+        showDebugError('Tauri bridge НЕ ЗАГРУЖЕН — кнопки работать не будут!');
+        if (statusText) statusText.textContent = 'ОШИБКА: Tauri не загружен';
+        return;
+    }
+
+    showDebug('Tauri invoke ready');
     isReady = true;
-    console.log('Tauri bridge ready');
-    statusText.textContent = 'Готово';
+    if (statusText) statusText.textContent = 'Готово';
 
     // Загружаем тему
     try {
         theme = await invoke('get_theme');
         document.body.className = theme;
+        showDebug('Theme: ' + theme);
     } catch (e) {
-        console.error('get_theme failed:', e);
+        showDebugError('get_theme failed', e);
     }
 
     // Загружаем закладки
     try {
         bookmarks = await invoke('get_bookmarks');
+        showDebug('Bookmarks: ' + bookmarks.length);
     } catch (e) {
-        console.error('get_bookmarks failed:', e);
+        showDebugError('get_bookmarks failed', e);
     }
 
     // Создаём стартовую вкладку
-    await newTab();
+    try {
+        await newTab();
+        showDebug('Init complete');
+    } catch (e) {
+        showDebugError('newTab failed', e);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -81,16 +236,15 @@ async function init() {
 // ═══════════════════════════════════════════════════════════════════════
 
 async function newTab() {
-    if (!isReady) { console.warn('Tauri not ready yet'); return; }
+    if (!isReady) { showDebugError('newTab: not ready'); return; }
     try {
         await invoke('new_tab', { url: null });
         await refreshTabs();
         await showStartPage();
-        addressBar.value = '';
-        startSearch.focus();
+        if (addressBar) addressBar.value = '';
+        if (startSearch) startSearch.focus();
     } catch (e) {
-        console.error('newTab error:', e);
-        statusText.textContent = 'Ошибка: ' + e;
+        showDebugError('newTab error', e);
     }
 }
 
@@ -103,12 +257,11 @@ async function switchTab(idx) {
             await loadTabContent(tab);
         }
     } catch (e) {
-        console.error('switchTab error:', e);
+        showDebugError('switchTab error', e);
     }
 }
 
-async function closeTab(event, idx) {
-    if (event) event.stopPropagation();
+async function closeTab(idx) {
     if (!isReady) return;
     try {
         const ok = await invoke('close_tab', { idx });
@@ -122,7 +275,7 @@ async function closeTab(event, idx) {
             }
         }
     } catch (e) {
-        console.error('closeTab error:', e);
+        showDebugError('closeTab error', e);
     }
 }
 
@@ -134,7 +287,7 @@ async function refreshTabs() {
         renderTabs();
         updateNavButtons();
     } catch (e) {
-        console.error('refreshTabs error:', e);
+        showDebugError('refreshTabs error', e);
     }
 }
 
@@ -146,11 +299,25 @@ function renderTabs() {
         const isActive = i === current;
         const el = document.createElement('div');
         el.className = 'tab' + (isActive ? ' active' : '');
-        el.onclick = () => switchTab(i);
+        el.dataset.idx = i;
         const title = tab.title || 'Без названия';
         const truncated = title.length > 28 ? title.substring(0, 28) + '…' : title;
         const safeTitle = escapeHtml(truncated);
-        el.innerHTML = `<span class="tab-title">${safeTitle}</span><span class="tab-close" onclick="event.stopPropagation(); closeTab(null, ${i})">×</span>`;
+        el.innerHTML = `<span class="tab-title">${safeTitle}</span><span class="tab-close">×</span>`;
+        // Клик по вкладке — переключаем
+        el.addEventListener('click', (e) => {
+            if (!e.target.classList.contains('tab-close')) {
+                switchTab(i);
+            }
+        });
+        // Клик по крестику — закрываем
+        const closeBtn = el.querySelector('.tab-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                closeTab(i);
+            });
+        }
         tabsContainer.appendChild(el);
     }
 }
@@ -163,27 +330,26 @@ async function loadTabContent(tab) {
     if (!tab) return;
     if (tab.url === 'https://duckduckgo.com' || tab.url === '' || tab.url === 'https://duckduckgo.com/') {
         await showStartPage();
-        addressBar.value = '';
+        if (addressBar) addressBar.value = '';
     } else {
         await showWebview(tab.url);
-        addressBar.value = tab.url;
+        if (addressBar) addressBar.value = tab.url;
     }
     updateBookmarkButton();
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  КОНТЕНТ — переключение между start page и нативным WebView окном
+//  КОНТЕНТ
 // ═══════════════════════════════════════════════════════════════════════
 
 async function showStartPage() {
     if (startPage) startPage.style.display = 'flex';
     if (progress) progress.style.display = 'none';
-    statusText.textContent = 'Готово';
-    // Скрываем окно контента
+    if (statusText) statusText.textContent = 'Готово';
     try {
         await invoke('hide_content');
     } catch (e) {
-        console.error('hide_content:', e);
+        showDebugError('hide_content', e);
     }
     if (startSearch) startSearch.focus();
 }
@@ -192,28 +358,24 @@ async function showWebview(url) {
     if (startPage) startPage.style.display = 'none';
     if (progress) progress.style.display = 'block';
     if (progressFill) progressFill.style.width = '30%';
+    if (statusText) statusText.textContent = 'Загрузка: ' + url;
 
-    statusText.textContent = 'Загрузка: ' + url;
-
-    // Открываем URL в нативном Tauri WebviewWindow
     try {
         await invoke('open_content', { url });
-        // Прогресс-симуляция
+        showDebug('open_content OK: ' + url);
         setTimeout(() => { if (progressFill) progressFill.style.width = '70%'; }, 200);
         setTimeout(() => {
             if (progressFill) progressFill.style.width = '100%';
             setTimeout(() => { if (progress) progress.style.display = 'none'; }, 300);
         }, 800);
 
-        // Обновляем title (используем URL как заголовок, так как Tauri webview
-        // не даёт напрямую получить title из другого окна)
         const title = url.replace(/^https?:\/\//, '').split('/')[0];
         await invoke('update_tab_title', { title });
         await invoke('add_to_history', { url, title });
         await refreshTabs();
     } catch (e) {
-        console.error('open_content error:', e);
-        statusText.textContent = 'Ошибка загрузки: ' + e;
+        showDebugError('open_content error', e);
+        if (statusText) statusText.textContent = 'Ошибка: ' + e;
     }
 }
 
@@ -228,39 +390,12 @@ async function navigate(url) {
         if (tab) {
             await refreshTabs();
             await showWebview(tab.url);
-            addressBar.value = tab.url;
+            if (addressBar) addressBar.value = tab.url;
             addressBar.blur();
         }
     } catch (e) {
-        console.error('navigate error:', e);
-        statusText.textContent = 'Ошибка: ' + e;
-    }
-}
-
-function onAddressKey(event) {
-    if (event.key === 'Enter') {
-        const val = addressBar.value.trim();
-        if (val) navigate(val);
-    } else if (event.key === 'Escape') {
-        addressBar.blur();
-    }
-}
-
-function onStartSearchKey(event) {
-    if (event.key === 'Enter') {
-        const val = startSearch.value.trim();
-        if (val) navigate(val);
-    }
-}
-
-let prevAddress = '';
-function onAddressFocus() {
-    prevAddress = addressBar.value;
-    addressBar.select();
-}
-function onAddressBlur() {
-    if (!addressBar.value && tabs[current]) {
-        addressBar.value = tabs[current].url;
+        showDebugError('navigate error', e);
+        if (statusText) statusText.textContent = 'Ошибка: ' + e;
     }
 }
 
@@ -271,9 +406,9 @@ async function goBack() {
         if (tab) {
             await refreshTabs();
             await showWebview(tab.url);
-            addressBar.value = tab.url;
+            if (addressBar) addressBar.value = tab.url;
         }
-    } catch (e) { console.error('goBack:', e); }
+    } catch (e) { showDebugError('goBack', e); }
 }
 
 async function goForward() {
@@ -283,15 +418,14 @@ async function goForward() {
         if (tab) {
             await refreshTabs();
             await showWebview(tab.url);
-            addressBar.value = tab.url;
+            if (addressBar) addressBar.value = tab.url;
         }
-    } catch (e) { console.error('goForward:', e); }
+    } catch (e) { showDebugError('goForward', e); }
 }
 
 async function refresh() {
     if (!isReady) return;
     if (tabs[current] && tabs[current].url && tabs[current].url !== 'https://duckduckgo.com') {
-        // Перезагружаем, открывая URL заново
         await showWebview(tabs[current].url);
     } else {
         await showStartPage();
@@ -315,9 +449,9 @@ async function toggleBookmark() {
         const isBookmarked = await invoke('toggle_bookmark', { url, title });
         bookmarks = await invoke('get_bookmarks');
         updateBookmarkButton();
-        statusText.textContent = isBookmarked ? 'Добавлено в закладки' : 'Удалено из закладок';
+        if (statusText) statusText.textContent = isBookmarked ? 'Добавлено в закладки' : 'Удалено из закладок';
     } catch (e) {
-        console.error('toggleBookmark:', e);
+        showDebugError('toggleBookmark', e);
     }
 }
 
@@ -337,15 +471,13 @@ async function showBookmarks() {
     try {
         bookmarks = await invoke('get_bookmarks');
         if (bookmarks.length === 0) {
-            statusText.textContent = 'Закладок нет';
+            if (statusText) statusText.textContent = 'Закладок нет';
             return;
         }
-        // Открываем HTML страницу с закладками в окне контента
         const html = buildBookmarksHtml();
         await invoke('open_content', { url: 'data:text/html;charset=utf-8,' + encodeURIComponent(html) });
-        hideMenu();
     } catch (e) {
-        console.error('showBookmarks:', e);
+        showDebugError('showBookmarks', e);
     }
 }
 
@@ -357,7 +489,6 @@ function buildBookmarksHtml() {
         body{font-family:system-ui;padding:40px;background:#fff;color:#000;margin:0}
         h1{margin-bottom:20px;color:#fc3f1d}
         ul{list-style:none;padding:0}
-        li{margin:0}
         a{color:#0066cc;text-decoration:none;display:block;padding:12px 0;border-bottom:1px solid #eee}
         a:hover{color:#fc3f1d;background:#fafafa}
         small{color:#666}
@@ -369,7 +500,7 @@ async function showHistory() {
     try {
         const history = await invoke('get_history');
         if (history.length === 0) {
-            statusText.textContent = 'История пуста';
+            if (statusText) statusText.textContent = 'История пуста';
             return;
         }
         const items = history.slice(-100).reverse().map(h =>
@@ -379,64 +510,36 @@ async function showHistory() {
             body{font-family:system-ui;padding:40px;background:#fff;color:#000;margin:0}
             h1{margin-bottom:20px;color:#fc3f1d}
             ul{list-style:none;padding:0}
-            li{margin:0}
             a{color:#0066cc;text-decoration:none;display:block;padding:12px 0;border-bottom:1px solid #eee}
             a:hover{color:#fc3f1d;background:#fafafa}
             small{color:#666}
         </style></head><body><h1>История</h1><ul>${items}</ul></body></html>`;
         await invoke('open_content', { url: 'data:text/html;charset=utf-8,' + encodeURIComponent(html) });
-        hideMenu();
     } catch (e) {
-        console.error('showHistory:', e);
+        showDebugError('showHistory', e);
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-//  МАСШТАБ (для стартовой страницы)
-// ═══════════════════════════════════════════════════════════════════════
-
-async function zoomIn() { hideMenu(); }
-async function zoomOut() { hideMenu(); }
-async function zoomReset() { hideMenu(); }
-
-// ═══════════════════════════════════════════════════════════════════════
-//  ТЕМА
-// ═══════════════════════════════════════════════════════════════════════
 
 async function toggleTheme() {
     if (!isReady) return;
     try {
         theme = await invoke('toggle_theme');
         document.body.className = theme;
-    } catch (e) { console.error('toggleTheme:', e); }
-    hideMenu();
+        showDebug('Theme: ' + theme);
+    } catch (e) {
+        showDebugError('toggleTheme', e);
+    }
 }
 
 async function clearHistory() {
     if (!isReady) return;
     try {
         await invoke('clear_history');
-        statusText.textContent = 'История очищена';
-    } catch (e) { console.error('clearHistory:', e); }
-    hideMenu();
+        if (statusText) statusText.textContent = 'История очищена';
+    } catch (e) {
+        showDebugError('clearHistory', e);
+    }
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-//  МЕНЮ
-// ═══════════════════════════════════════════════════════════════════════
-
-function toggleMenu(event) {
-    if (event) event.stopPropagation();
-    if (menuDropdown) menuDropdown.classList.toggle('show');
-}
-
-function hideMenu() {
-    if (menuDropdown) menuDropdown.classList.remove('show');
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-//  Кнопки навигации
-// ═══════════════════════════════════════════════════════════════════════
 
 function updateNavButtons() {
     if (!btnBack || !btnForward || !tabs[current]) return;
@@ -452,53 +555,19 @@ function updateNavButtons() {
 document.addEventListener('keydown', (e) => {
     const ctrl = e.ctrlKey || e.metaKey;
     if (ctrl && e.key === 't') { e.preventDefault(); newTab(); }
-    else if (ctrl && e.key === 'w') { e.preventDefault(); closeTab(null, current); }
+    else if (ctrl && e.key === 'w') { e.preventDefault(); closeTab(current); }
     else if (ctrl && e.key === 'l') { e.preventDefault(); if (addressBar) { addressBar.focus(); addressBar.select(); } }
     else if (ctrl && e.key === 'd') { e.preventDefault(); toggleBookmark(); }
     else if (ctrl && e.key === 'h') { e.preventDefault(); showHistory(); }
     else if (ctrl && e.shiftKey && (e.key === 'T' || e.key === 't')) { e.preventDefault(); toggleTheme(); }
-    else if (ctrl && e.key === '+') { e.preventDefault(); zoomIn(); }
-    else if (ctrl && e.key === '-') { e.preventDefault(); zoomOut(); }
-    else if (ctrl && e.key === '0') { e.preventDefault(); zoomReset(); }
     else if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); goBack(); }
     else if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); goForward(); }
     else if (e.altKey && e.key === 'Home') { e.preventDefault(); goHome(); }
     else if (e.key === 'F5') { e.preventDefault(); refresh(); }
-    else if (e.key === 'Escape') { hideMenu(); }
-});
-
-// Закрытие меню при клике вне его
-document.addEventListener('click', (e) => {
-    if (menuDropdown && !e.target.closest('#menuDropdown') && !e.target.closest('#btnMenu')) {
-        hideMenu();
+    else if (e.key === 'Escape') {
+        if (menuDropdown) menuDropdown.classList.remove('show');
     }
 });
-
-// ═══════════════════════════════════════════════════════════════════════
-//  ГЛОБАЛЬНЫЕ ФУНКЦИИ (для onclick в HTML)
-// ═══════════════════════════════════════════════════════════════════════
-
-window.newTab = newTab;
-window.switchTab = switchTab;
-window.closeTab = closeTab;
-window.navigate = navigate;
-window.goBack = goBack;
-window.goForward = goForward;
-window.refresh = refresh;
-window.goHome = goHome;
-window.toggleBookmark = toggleBookmark;
-window.toggleMenu = toggleMenu;
-window.showBookmarks = showBookmarks;
-window.showHistory = showHistory;
-window.zoomIn = zoomIn;
-window.zoomOut = zoomOut;
-window.zoomReset = zoomReset;
-window.toggleTheme = toggleTheme;
-window.clearHistory = clearHistory;
-window.onAddressKey = onAddressKey;
-window.onStartSearchKey = onStartSearchKey;
-window.onAddressFocus = onAddressFocus;
-window.onAddressBlur = onAddressBlur;
 
 // ═══════════════════════════════════════════════════════════════════════
 //  ЗАПУСК
